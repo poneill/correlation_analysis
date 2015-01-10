@@ -1,23 +1,30 @@
 """
 What is the most efficient way to pack info into a site: correlation or conservation?
+
+Fundamental conservation: total_mi(ps) + h_np(ps) + ic(ps) = 2*w
 """
 from mpl_toolkits.mplot3d import Axes3D
-from utils import simplex_sample,h,norm,dot,transpose,log2,interpolate
+from utils import simplex_sample,h,norm,dot,transpose,log2,interpolate,pl
 from itertools import product
 from tqdm import tqdm
 import numpy as np
 from math import log,exp,sqrt,acos,pi,cos,sin
 from matplotlib import pyplot as plt
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr,spearmanr
 import sys
 import random
 sys.path.append("/home/pat/the_royal_we/src")
 from we import weighted_ensemble
 
+base_index = {b:k for k,b in enumerate("ACGT")}
+
 def sample(num_cols):
     return np.array(simplex_sample(4**num_cols))
 
-def marginalize(ps):
+def h_np(ps):
+    return -np.sum(ps*np.log(ps))/log(2)
+    
+def marginalize_ref(ps):
     """turn ps into a psfm"""
     n = len(ps)
     assert log(n,4) == int(log(n,4))
@@ -28,38 +35,115 @@ def marginalize(ps):
             psfm[i][d] += ps[k]
     return psfm
 
-def ic(ps):
-    psfm = marginalize(ps)
+def marginalize(ps,M=None):
+    n = len(ps)
+    w = int(log(n,4))
+    if M is None:
+        M = marginalization_matrix(w)
+    v = M.dot(ps)
+    return np.reshape(v,(w,4))
+
+def make_kmers(w):
+    return (product(*["ACGT" for i in range(w)]))
+    
+def marginalization_matrix_ref(w):
+    kmers = make_kmers(w)
+    M = np.zeros((4*w,4**w))
+    for r in tqdm(xrange(4*w),total=4*w):
+        psfm_col = r//4
+        base = "ACGT"[r%4]
+        for c, kmer in enumerate(kmers):
+            if kmer[psfm_col] == base:
+                M[r][c] = 1
+    return M
+
+def marginalization_matrix(w):
+    n = 4**w
+    M = np.zeros((4*w,n))
+    for r in tqdm(xrange(4*w),total=4*w):
+        psfm_col = r//4
+        run_length = n//(4**(psfm_col+1))
+        offset = (r % 4) * run_length
+        off_length = run_length * 4
+        #print "row: %s, run_length %s, off_length" % (r,run_length,off_length)
+        for run in xrange(4**psfm_col):
+            start = offset + off_length*run
+            stop = start + run_length
+            M[r][start:stop] += 1
+    return M
+
+def ic(ps,M=None):
+    psfm = marginalize(ps,M)
     return sum(2-h(col) for col in psfm)
 
-def plot_h_vs_ic(num_cols,trials,max_h=None):
+def psfm_entropy(ps,M=None):
+    psfm = marginalize(ps,M)
+    return sum(h(col) for col in psfm)
+    
+def total_mi(ps,M=None):
+    w = int(log(len(ps),4))
+    if M is None:
+        M = marginalization_matrix(w)
+    psfm = marginalize(ps,M)
+    w = len(psfm)
+    dkl = 0
+    for k,kmer in tqdm(enumerate(make_kmers(w)),total=len(ps)):
+        p = ps[k]
+        logq = sum([log(psfm[i][base_index[c]]) for i,c in enumerate(kmer)])
+        dkl += p * (log(p)-logq)
+    return dkl/log(2)
+
+def plot_h_vs_ic(L,trials,sigma=1,max_h=None,M=None):
     if max_h is None:
-        pss = [sample(num_cols) for i in tqdm(range(trials))]
+        print "generating samples"
+        pss = [simplexify_sample(4**L,sigma=sigma)
+               for i in tqdm(range(trials))]
     else:
         pss = []
         while len(pss) < trials:
-            ps = sample(num_cols)
+            ps = sample(L)
             if h(ps) < max_h:
                 pss.append(ps)
                 print len(pss)
-    ics = map(ic,tqdm(pss))
-    hs = map(h,tqdm(pss))
-    plt.scatter(hs,ics)
-    plt.plot([0,2*num_cols],[2*num_cols,0])
-    print pearsonr(ics,hs)
-    plt.xlabel("Entropy")
-    plt.ylabel("IC")
+    print "computing M"
+    if M is None:
+        M = marginalization_matrix(L)
+    icq_s = map(lambda ps:ic(ps,M),tqdm(pss))
+    print "computing entropy"
+    icp_s = map(lambda ps:2*L - h_np(ps),tqdm(pss))
+    # print "computing total mi"
+    # mis = map(lambda ps:total_mi(ps,M),tqdm(pss))
+    # print "computing columnwise entropies"
+    # hqs = map(lambda ps:psfm_entropy(ps,M),tqdm(pss))
+    # plt.scatter(hs,hqs)
+    plt.scatter(icp_s,icq_s)
+    #plt.plot([0,2*L],[2*L,0])
+    #plt.plot([0,2*L],[0,2*L])
+    # plt.plot([0,2],[0,4])
+    # plt.plot([0,2],[0,2*L])
+    # print pearsonr(ics,hs)
+    # print spearmanr(ics,hs)
+    plt.plot([0,2*L],[0,2*L])
+    plt.plot(*pl(lambda icp:L*icp+2*(L-L**2),[2*(L-1),2*L]))
+    plt.xlabel("Distribution IC")
+    plt.ylabel("PSFM IC")
+    plt.title("Length=%s" % L)
             
 def project_to_simplex(v):
     """Project vector v onto probability simplex"""
-    assert np.all(v >= 0)
     ans = v/np.sum(v)
-    assert np.all(ans >= 0),v
     return ans
 
 def normalize(p):
     """normalize to unit length"""
     return p/((np.linalg.norm(p)))
+
+def simplexify(p):
+    q = np.exp(p)
+    return q/np.sum(q)
+
+def simplexify_sample(k,sigma=1):
+    return simplexify(np.random.normal(0,sigma,k))
     
 def grad_ref(p):
     """Return gradient of entropy constrained to simplex"""
@@ -154,6 +238,14 @@ def plot_flattened_transport(n):
         p = simplex_sample(3)
         traj = map(project_to_simplex,circular_transport(p,q))
         ax.plot(*transpose(traj))
+
+def plot_points(ps):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    xs,ys,zs = transpose([[1,0,0],[0,1,0],[0,0,1],[1,0,0]])
+    ax.plot(xs,ys,zs)
+    pxs,pys,pzs = transpose(ps)
+    ax.scatter(pxs,pys,pzs)
         
 def plot_h_vs_ic_entropy_prior(num_cols):
     def perturb(ps):
@@ -172,3 +264,133 @@ def plot_h_vs_ic_entropy_prior(num_cols):
                              M=M,
                              timesteps=100,
                              tau=1,verbose=1)
+
+def in_simplex(p):
+    return abs(sum(p) - 1) < 10**-16 and np.all(p >= 0)
+
+def propose(p,sigma=0.1):
+    """Propose gaussian increment from p in probability simplex"""
+    K = len(p)
+    v = np.random.normal(0,sigma,K)
+    p_new = project_to_simplex(p + v)
+    if in_simplex(p_new):
+        return p_new
+    else:
+        return p
+        
+            
+def walk(p0,steps,sigma=0.01):
+    p = np.copy(p0)
+    ps = [p]
+    K = len(p)
+    while len(ps) < steps:
+        v = np.random.normal(0,sigma,K)
+        p_new = project_to_simplex(p + v)
+        if in_simplex(p_new):
+            ps.append(p_new)
+    return ps
+
+def mh_sample(K,iterations=50000):
+    p0 = np.array(simplex_sample(K))
+    f = lambda p:1/h(p)**K
+    proposal = lambda p:propose(p,sigma=1)
+    return mh(f,proposal,p0,iterations=iterations)
+
+def average_energy(K,sigma):
+    eps = np.random.normal(0,sigma,K)
+    return eps.dot(simplexify(eps))
+
+def predict_average_energy(K,sigma):
+    return sigma*(1-1/sqrt(K)*exp(sigma**2))
+    
+def test_predict_average_energy(K,sigma,n=100):
+    cis = mean_ci(([average_energy(K,sigma) for i in tqdm(range(n))]))
+    print predict_average_energy(K,sigma),cis
+    
+def partition(K,sigma):
+    eps = np.random.normal(0,sigma,K)
+    return np.sum(np.exp(eps))
+
+def log_partition(K,sigma):
+    return log(partition(K,sigma))
+
+def predict_log_partition_dep(K,sigma):
+    Z0,sdZ = predict_partition(K,sigma)
+    varZ = sdZ**2
+    print Z0,varZ
+    zeroth_term = log(K) + sigma**2/2.0
+    second_term = -1/2.0 * varZ/(2*(Z0**2))
+    print zeroth_term,second_term
+    return zeroth_term + second_term
+
+def predict_log_partition(K,sigma):
+    return log(K) + (sigma**2)/2.0 - 1/(2*sqrt(K))*(exp(sigma**2) - 1)
+
+def predict_log_partition_0(K,sigma):
+    return log(K) + (sigma**2)/2.0
+    
+def predict_log_partition_normal(K,sigma):
+    """The idea here is to taylor expand log(Z) about its mean, but
+    supplying the moments through the normal approximation of the
+    distribution of Z, which should be good when K is large."""
+    Z0,norm_sig = predict_partition(K,sigma)
+    print norm_sig/Z0
+    return (log(Z0)
+            - 1/2.0*(norm_sig/Z0)**2
+            - 3/24.0*(norm_sig/Z0)**4
+            - 15/720.0*(norm_sig/Z0)**6
+            - 105/40320.0*(norm_sig/Z0)**8)
+    
+def predict_log_partition_normal_series(K,sigma,n):
+    Z0,norm_sig = predict_partition(K,sigma)
+    a = norm_sig/Z0
+    print a
+    def facfac(k):
+        assert k % 2 == 1
+        return reduce(lambda x,y:x*y,range(1,k+1,2))
+    return log(Z0) - sum(1/fac(k)*a**k*facfac(k-1) for k in range(2,n+1,2))
+    
+def predict_partition(K,sigma):
+    mean_Z = K*exp(sigma**2/2.0)
+    sd_Z = sqrt(K*(exp(sigma**2)-1)*exp(sigma**2))
+    return mean_Z,sd_Z
+
+def test_predict_log_partition(sigma=1):
+    for i in range(1,9):
+ 	K = 10**i
+        sigma = 3
+        ci = mean_ci([log_partition(K,sigma) for j in tqdm(range(10))])
+ 	print "10^%s" % i,predict_log_partition(K,sigma),ci,1/(2*sqrt(K))
+        
+def predict_entropy(K,sigma):
+    return sigma*predict_average_energy(K,sigma) + predict_log_partition(K,sigma)
+
+def nth_moment(K,sigma,n):
+    return K*exp(n**2*sigma**2/2.0)
+
+def count_solutions(K,n):
+    """
+    Count solutions to k0 + k1 + ... = K
+    subject to 0k0 + 1k1 + 2k2 +... = n.
+    Second condition implies that solutions are of the form k0,...,kn.
+    """
+    num_sols = 0
+    for ks in (bin_sols(K,n+1)):
+        ks = np.array(ks)
+        #print ks,K,np.sum(ks),n,np.arange(0,n+1).dot(ks)
+        if np.sum(ks) == K and np.arange(0,n+1).dot(ks) == n:
+            print ks, "is a solution"
+            num_sols += 1
+    print "num_sols:",num_sols
+    
+def bin_sols(n,k):
+    """Return ways to put n elements in k bins"""
+    assert k > 0
+    if k == 1:
+        return [[n]]
+    else:
+        return concat([[[i]+sol for sol in bin_sols(n-i,k-1)]
+                       for i in range(n+1)])
+    
+    
+print "loaded"
