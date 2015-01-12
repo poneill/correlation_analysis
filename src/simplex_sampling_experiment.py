@@ -4,8 +4,8 @@ What is the most efficient way to pack info into a site: correlation or conserva
 Fundamental conservation: total_mi(ps) + h_np(ps) + ic(ps) = 2*w
 """
 from mpl_toolkits.mplot3d import Axes3D
-from utils import simplex_sample,h,norm,dot,transpose,log2,interpolate,pl
-from itertools import product
+from utils import simplex_sample,h,norm,dot,transpose,log2,interpolate,pl,fac
+from itertools import product,permutations
 from tqdm import tqdm
 import numpy as np
 from math import log,exp,sqrt,acos,pi,cos,sin
@@ -22,6 +22,7 @@ def sample(num_cols):
     return np.array(simplex_sample(4**num_cols))
 
 def h_np(ps):
+    """Return entropy in bits"""
     return -np.sum(ps*np.log(ps))/log(2)
     
 def marginalize_ref(ps):
@@ -391,6 +392,51 @@ def bin_sols(n,k):
     else:
         return concat([[[i]+sol for sol in bin_sols(n-i,k-1)]
                        for i in range(n+1)])
+
+def bin_col(ps):
+    """Stuff ps into a single column"""
+    K = len(ps)
+    qs = np.zeros(4)
+    for i in range(4):
+        qs[i] += np.sum(ps[K/4*i:K/4*(i+1)])
+    return qs
     
+def entropy_spectrum(ps,N):
+    """
+    Sample psfm entropy spectrum, the set of entropies of psfms
+    constructed from permutations of ps
+    """
+    print "computing perms"
+    K = len(ps)
+    perms = [np.array([ps[i] for i in knuth_shuffle(K)]) for i in xrange(N)]
+    print "computing entropies"
+    M = marginalization_matrix(int(log(K,4)))
+    return [psfm_entropy(p,M) for p in perms]
+
+def plot_entropy_vs_spectrum(w,beta,n,perms_per_sample):
+    """
+    Sample distributions, plot entropies of their psfm permutations
+    """
+    K = int(4**w)
+    M = marginalization_matrix(w)
+    print "generating samples"
+    pss = [simplexify_sample(K,beta) for i in tqdm(xrange(n))]
+    print "main loop"
+    for ps in tqdm(pss):
+        hp = h_np(ps)
+        print hp
+        #perms = [np.array([ps[i] for i in knuth_shuffle(K)]) for i in xrange(perms_per_sample)]
+        perms = [ps[np.random.permutation(K)] for i in xrange(perms_per_sample)]
+        hqs = [psfm_entropy(p,M) for p in perms]
+        plt.scatter([hp]*perms_per_sample,hqs)
+    plt.plot([0,2*w],[0,2*w])
+    
+def knuth_shuffle(K):
+    """Return Knuth shuffle on range(K)"""
+    xs = range(K)
+    for i in range(K-1):
+        j = random.randrange(K)
+        xs[i],xs[j] = xs[j],xs[i]
+    return xs
     
 print "loaded"
