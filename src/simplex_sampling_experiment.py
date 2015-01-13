@@ -397,10 +397,36 @@ def bin_col(ps):
     """Stuff ps into a single column"""
     K = len(ps)
     qs = np.zeros(4)
+    # can be made a little more numpythonic...
     for i in range(4):
         qs[i] += np.sum(ps[K/4*i:K/4*(i+1)])
     return qs
-    
+
+def plot_bin_col_ref(w,beta,N):
+    K = int(4**w)
+    print "pss"
+    pss = [simplexify_sample(K,beta) for i in xrange(N)]
+    print "hps"
+    hps = map(h_np,pss)
+    print "hqs"
+    hqs = [h_np(bin_col(ps)) for ps in pss]
+    plt.scatter(hps,hqs)
+    plt.plot([0,2*w],[0,2*w])
+
+def plot_bin_col(w,beta,N):
+    hps = []
+    hqs = []
+    K = int(4**w)
+    for i in tqdm(range(N)):
+        ps = simplexify_sample(K,beta)
+        ps.sort()
+        hps.append(h_np(ps))
+        hqs.append(h_np(bin_col(ps)))
+    plt.scatter(hps,hqs)
+    plt.plot([0,2*w],[0,2*w])
+    return hps,hqs    
+
+        
 def entropy_spectrum(ps,N):
     """
     Sample psfm entropy spectrum, the set of entropies of psfms
@@ -415,7 +441,7 @@ def entropy_spectrum(ps,N):
 
 def plot_entropy_vs_spectrum(w,beta,n,perms_per_sample):
     """
-    Sample distributions, plot entropies of their psfm permutations
+    
     """
     K = int(4**w)
     M = marginalization_matrix(w)
