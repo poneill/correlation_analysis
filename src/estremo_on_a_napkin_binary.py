@@ -2,16 +2,24 @@ import numpy as np
 import random
 from simplex_sampling_experiment import make_kmers,h_np
 from estremo_on_a_napkin import sample_eps,boltzmann
-from utils import random_site,inverse_cdf_sample,mean,motif_ic,h
+from utils import random_site,inverse_cdf_sample,mean,motif_ic,h,transpose
 from tqdm import tqdm,trange
+from math import exp,log
+from matplotlib import pyplot as plt
+import seaborn as sbn
 
 n = 16
 L = 5
 beta = 1
 K = 4**L
 G = 5*10**6
-site_mut_prob = 10**-0.5
-rec_mut_prob = 10**-0.5
+# site_mut_prob = 10**-0.5
+# rec_mut_prob = 10**-0.5
+
+site_mut_prob = 10**-0.5 * 0
+#site_mut_prob = 10**-10
+rec_mut_prob = 10**-0.25
+
 mut_prob = 1-(1-site_mut_prob)*(1-rec_mut_prob)
 print "mut_prob:",mut_prob
 
@@ -52,11 +60,14 @@ def test_background_Z():
 def fitness((sites,rec)):
     return np.sum(occs(sites,rec))
 
+def sites_recognized((sites,rec)):
+    return sum([rec[idx_of_word[site]] for site in sites])
+    
 def mutate((sites,rec)):
     new_sites = mutate_sites(sites,site_mu)
     new_rec = mutate_rec(rec,rec_mu)
     return (new_sites,new_rec)
-
+        
 def mutate_rec(rec,rec_mu):
     new_rec = np.copy(rec)
     for i in xrange(len(new_rec)):
@@ -134,14 +145,45 @@ def collapsed_moran_process(N,turns,init=sample_species,mutate=mutate,fitness=fi
             ancestor = prop
             f = fp
         if turn % modulus == 0:
-            print (turn,f,f,motif_ic(ancestor[0]),rec_h(ancestor[1]))
+            print (turn,f,f,motif_ic(ancestor[0],correct=False),rec_h(ancestor[1]))
             hist.append((turn,f,f,motif_ic(ancestor[0]),rec_h(ancestor[1])))
     return ancestor,hist
-    
-def plot_hist(hist):
+
+def mh_moran_process(turns,beta=1,init=sample_species,mutate=mutate,fitness=fitness,x=None,modulus=100):
+    if x is None:
+        x = sample_species()
+    f = fitness(x)
+    hist = []
+    accs = 0
+    disads = 0
+    for turn in xrange(turns):
+        xp = mutate(x)
+        fp = fitness(xp)
+        log_transition_prob = (beta*(fp-f)) # assuming fitness behaves as state energy;mutation probs cancel, since equal
+        # print f,fp
+        # print num,denom
+        # print transition_prob
+        if log(random.random()) < log_transition_prob:
+            x = xp
+            f = fp
+            accs += 1
+            if log_transition_prob < 0:
+                disads += 1
+        if turn % modulus == 0:
+            mot_ic = motif_ic(x[0],correct=False)
+            rec_spec = np.sum(x[1])
+            sites_recced = sites_recognized(x)
+            print (turn,f,f,mot_ic,rec_spec,sites_recced),accs/float(turn+1),disads/float(accs+1)
+            hist.append((turn,f,f,mot_ic,rec_spec,sites_recced))
+    return x,hist
+
+def plot_hist(hist,show=True):
     plt.plot(transpose(hist)[0],transpose(hist)[1])
-    plt.plot(transpose(hist)[0],transpose(hist)[2])
-    plt.plot(transpose(hist)[0],transpose(hist)[3])
-    plt.plot(transpose(hist)[0],transpose(hist)[4])
+    plt.plot(transpose(hist)[0],transpose(hist)[2],label="fitness")
+    plt.plot(transpose(hist)[0],transpose(hist)[3],label="motif ic")
+    plt.plot(transpose(hist)[0],transpose(hist)[4],label="rec spec")
+    plt.plot(transpose(hist)[0],transpose(hist)[5],label="sites recced")
     plt.semilogy()
-    plt.show()
+    plt.legend()
+    if show:
+        plt.show()
