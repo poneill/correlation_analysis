@@ -1,8 +1,9 @@
 """
 Replicate the results of simplex_sampling_experiment using discrete motifs
 """
+import itertools
 from simplex_sampling_experiment import make_kmers
-from utils import random_site,motif_ic,mutate_motif,random_motif,h,pairs,mutate_site
+from utils import random_site,motif_ic,mutate_motif,random_motif,h,pairs,mutate_site,entropy,fac,choose
 import random
 from tqdm import *
 from collections import defaultdict, Counter
@@ -38,17 +39,16 @@ def best_ic_motif(L,n,trials):
             best_motif = motif
     return best_motif
 
-def motif_with_ic(L,n,ic_min,ic_max,samples=100000):
-    sample_col_ics = [motif_ic(random_motif(1,n),correct=False) for i in trange(samples)]
-    counts = Counter(sample_col_ics)
-    min_possible,max_possible = min(counts.values()),max(counts.values())
-    if ic_min < min_possible * L or ic_max > max_possible * L:
-        print "Warning: cannot sample; enlarging"
-        return motif_with_ic(L,n,ic_min,ic_max,samples*10)
+def motif_with_ent(L,n,ent_min,ent_max):
+    ent_dist = entropy_distribution(n)
+    min_possible,max_possible = min(ent_dist.keys()),max(ent_dist.keys())
+    if ent_min < min_possible * L or ent_max > max_possible * L:
+        print "Warning: cannot meet desired entropy"
+        return None
     searching_for_cols = True
     print "sampling cols"
     while searching_for_cols:
-        desired_col_ics = [random.choice(sample_col_ics) for i in xrange(L)]
+        desired_col_ents = [random.choice(sample_col_ics) for i in xrange(L)]
         sum_ic = sum(desired_col_ics)
         print sum_ic
         if ic_min <= sum_ic < ic_max:
@@ -65,8 +65,21 @@ def motif_with_ic(L,n,ic_min,ic_max,samples=100000):
                 searching_for_col = False
     return ["".join(w) for w in transpose(final_cols)]
     
-def subset_sum(xs,k,a,b):
-    """return all subsets of xs summing to within [a,b)"""
+def interval_subset_sum_ref(xs,k,a,b):
+    """return all k-subsets of xs summing to within [a,b)"""
+    return [comb for comb in itertools.combinations(xs,k)
+            if a<= sum(comb) < b]
+
+def interval_subset_sum(xs,k,a,b):
+    if k == 0 and a < 0 < b:
+        return []
+    elif k == 0 and not (a < 0 < b):
+        return [None]
+    else:
+        return [[x] + interval_subset_sum(xs,k-1,a-x,b-x) for x in xs]
+        
+    
+    
     
 def partition_sequence(seq):
     return sorted([seq.count(c) for c in "ACGT"])
@@ -83,11 +96,46 @@ def count_partitions(n):
         print k,v,abstract_sequences*bar#,abstract_sequences,float(v)/abstract_sequences,foo,bar
     return d
 
+def weight_of_partition(part):
+    n = sum(part)
+    abstract_sequences = fac(n)/prod(fac(i) for i in part)
+    foo = [part.count(i) for i in set(part)]
+    bar = fac(4)/prod(fac(i) for i in foo)
+    return abstract_sequences*bar
+
+def entropy_distribution(n):
+    """compute distribution of entropy of sequences of length n, returning
+    dictionary of form {h:p}"""
+    d = defaultdict(float)
+    # construct dictionary this way to avoid collisions if distinct
+    # partitions have same entropy values
+    for part in restricted_partitions(n):
+        d[entropy_from_partition(part)] += (weight_of_partition(part)/4**n)
+    return dict(d)
+    
 def enumerate_partitions(n):
     """idiotic way to do this"""
     stems = filter(lambda x:len(x)<=4,accelAsc(n))
     return [tuple(([0]*(4-len(stem))) + stem) for stem in stems]
 
+def restricted_partitions(n):
+    for w in range(n/4+1):
+        if w * 4 > n:
+            continue
+        for x in range(w,n+1):
+            if x*3 > (n - w):
+                continue
+            for y in range(x,n+1):
+                if y*2 > (n-w-x):
+                    continue
+                for z in range(y,n+1):
+                    if z > (n-w-x-y):
+                        continue
+                    elif w + x + y + z == n:
+                        yield (w,x,y,z)
+                        
+                    
+                    
 def entropy_from_partition(part):
     Z = float(sum(part))
     ps = [c/Z for c in part]
