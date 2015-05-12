@@ -4,16 +4,20 @@ What is the most efficient way to pack info into a site: correlation or conserva
 Fundamental conservation: total_mi(ps) + h_np(ps) + ic(ps) = 2*w
 """
 from mpl_toolkits.mplot3d import Axes3D
-from utils import simplex_sample,h,norm,dot,transpose,log2,interpolate,pl,fac,maybesave,choose2
+from utils import simplex_sample,h,norm,dot,transpose,log2,interpolate,pl,fac
+from utils import maybesave,choose2,zipWith,bisect_interval,mean,show,hamming
 from itertools import product,permutations
-from tqdm import tqdm
+from tqdm import tqdm,trange
 import numpy as np
 from math import log,exp,sqrt,acos,pi,cos,sin,gamma
 from matplotlib import pyplot as plt
+import scipy
 from scipy.stats import pearsonr,spearmanr
+from scipy.special import gammaln
 import sys
 import random
 from collections import defaultdict
+import sympy
 sys.path.append("/home/pat/the_royal_we/src")
 from we import weighted_ensemble
 
@@ -34,14 +38,161 @@ def h_np(ps):
 def dkl(ps,qs):
     return np.sum(ps*np.log(ps/qs))
 
+def inst_dkl_ref(ps,Mut=None,dt=10**-6):
+    """Return rate of change of the KL divergence against mutation"""
+    L = int(log(len(ps),4))
+    if Mut is None:
+        Mut = mutation_matrix_ref(mu=1,w=L)
+    psp = mutate(ps,dt,Mut)
+    return 2*dkl(ps,psp)/(dt**2) # why dt**2 though?
+
+def inst_dkl(ps,Mut=None):
+    L = int(log(len(ps),4))
+    if Mut is None:
+        Mut = mutation_matrix_ref(mu=1,w=L)
+    psp = Mut.dot(ps)
+    psp2 = Mut.dot(psp)
+    return -np.sum(psp2 - psp**2/ps)
+
+def dHdt(ps,Mut=None,dt=10**-6):
+    """Return instantaneous rate of change of entropy"""
+    L = int(log(len(ps),4))
+    if Mut is None:
+        Mut = mutation_matrix_ref(mu=1,w=L)
+    psp = mutate(ps,dt,Mut)
+    return (h(psp)-h(ps))/dt
+
+def dHdt2(ps):
+    L = num_cols_from_vector(ps)
+    fs = ps - norm_lap(ps)
+    term1 = cross_h(fs,ps)
+    term2 = h(ps)
+    return  3*L*(term1 - term2)
+
+def dHdt3(ps):
+    L = num_cols_from_vector(ps)
+    return  3*L*cross_h(-norm_lap(ps),ps)
+    
+def inst_dkl_experiment(L,N=100,dt=10**-6,desired_entropy=None):
+    K = 4**L
+    if desired_entropy is None:
+        desired_entropy = L # 1 bit/base
+    alpha = find_alpha(K,desired_entropy)
+    Mut = mutation_matrix_ref(mu=1,w=L)
+    print "p_dkls"
+    p_dkls = [inst_dkl(dirichlet_sample(K,alpha),Mut=Mut) for i in trange(N)]
+    print "q_dkls"
+    q_dkls = [show(inst_dkl(sample_qs(L,desired_entropy,col_tol=0.01),Mut=Mut)) for i in trange(N)]
+    print len(q_dkls)
+    plt.boxplot([p_dkls,q_dkls])
+    plt.ylabel = "Dkl against mutation"
+    plt.xlabel(["P","Q"])
+    
+def sample_qs(L,req_entropy,col_tol = 0.001):
+    """Given L and required entropy, sample an independent distribution
+    uniformly from the set of psfms meeting those criteria.  Return a
+    full "qs" vector of length 4^L
+    """
+    # first decide how much entropy in each column
+    valid = False
+    print "assigning entropies to columns"
+    while not valid:
+        col_ents = np.array(simplex_sample(L))*req_entropy
+        if all(col_ents <= 2): #bits/base
+            valid = True
+    cols = []
+    print "assigning column:"
+    for j in tqdm(range(L)):
+        col_ent = col_ents[j]
+        col = sample_with_given_entropy(4,col_ent)
+        cols.append(col)
+    #return cols
+    return qs_from_psfm(cols)
+
+def isocontour_walk(ps0,step_size=10**-2,steps=10,tol=0.01):
+    """perform random walk along entropy isocontour"""
+    ps = np.copy(ps0)
+    h0 = h_np(ps0)
+    K = len(ps)
+    eta = .005
+    print "h0:",h0
+    print steps
+    for step in xrange(steps):
+        # 1) first move along isocontour
+        g = grad(ps) # direction of greatest increase in entropy
+        hps = h_np(ps)
+        eps = np.random.normal(np.log(ps),scale=step_size)
+        exps = np.exp(eps)
+        us = exps/np.sum(exps)
+        #print "us:",us
+        vs = us - ps
+        vs_proj_grad = vs.dot(g)/g.dot(g)*g
+        ps += vs_proj_grad
+
+        # 2) next recover to original entropy value
+        unit_vs_proj_grad = vs_proj_grad/np.linalg.norm(vs_proj_grad)
+        diff = h0 - h_np(ps)
+        #print "diff:",diff
+        i = 0
+        while abs(diff) > 10**-15:
+            #print "diff:",diff
+            i += 1
+            ps += grad(ps)*diff*eta
+            #print ps
+            diff = h0 - h_np(ps)
+            if i % 1000 == 0:
+                print diff
+        # print "vs_proj_grad:",vs_proj_grad,(np.linalg.norm(vs_proj_grad)/np.linalg.norm(vs))**2
+        # print "vs_proj_isoc:",vs_proj_isoc,(np.linalg.norm(vs_proj_isoc)/np.linalg.norm(vs))**2
+        #dp = vs - vs_proj_g
+        #ps_new = ps + dp
+        #print "ps1:",ps,hps
+        d = sqrt(np.sum((ps0-ps)**2))
+        if abs(h0-hps) > tol:
+            print "tolerance exceeded"
+            return
+            #raise Exception(ps,g,vs_proj_g)
+        #ps = ps_new
+        # exps = np.exp(ps + dp)
+        # ps = exps/np.sum(exps)
+        if step % 100 == 0:
+            print step,hps,d,np.sum(ps)
+    return ps
+
+def find_alpha(K,entropy,tol_factor=0.01):
+    ub = 1/(log2(K)-entropy)
+    #print "K:%s,desired entropy:%s, ub:%s" % (K,entropy,ub)
+    alpha = bisect_interval(lambda alpha:expected_entropy(K,alpha)-entropy,10**-10,ub)
+    return alpha
+    
+def sample_with_given_entropy(K,entropy,tol_factor=0.01):
+    alpha = find_alpha(K,entropy,tol_factor=0.01)
+    tol = entropy * tol_factor
+    sampled = False
+    while not sampled:
+            ps = dirichlet_sample(K,alpha)
+            if (abs(h_np(ps) - entropy) < tol):
+                sampled = True
+    return ps
+
 def queify(ps,M=None):
     psfm = marginalize(ps)
-    qs = np.zeros(len(ps))
+    return qs_from_psfm(psfm)
+
+def sample_qs_with_given_entropy(K,entropy,tol_factor=0.01):
+    ps = sample_with_given_entropy(K,entropy,tol_factor)
+    return qs_from_psfm(marginalize(ps))
+    
+def qs_from_psfm(psfm):
+    qs = np.zeros(int(4**len(psfm)))
     for k,idxs in enumerate(product(*[range(4) for i in range(len(psfm))])):
-        log_q = sum(log(psfm[j][idx]) for j,idx in enumerate(idxs))
-        qs[k] = exp(log_q)
+        #log_q = sum(log(psfm[j][idx]) for j,idx in enumerate(idxs))
+        psfm_vals = [(psfm[j][idx]) for j,idx in enumerate(idxs)]
+        if all([val > 0 for val in psfm_vals]):
+            qs[k] = exp(sum(map(log,psfm_vals)))
+        else:
+            qs[k] = 0
     return qs
-        
     
 def marginalize_ref(ps):
     """turn ps into a psfm"""
@@ -62,8 +213,11 @@ def marginalize(ps,M=None):
     v = M.dot(ps)
     return np.reshape(v,(w,4))
 
+def marginalize_spec(ps):
+    vander = np.vander(ps)
+    
 def make_kmers(w):
-    return (product(*["ACGT" for i in range(w)]))
+    return ("".join(word) for word in (product(*["ACGT" for i in range(w)])))
 
 def marginalization_matrix_ref(w):
     kmers = make_kmers(w)
@@ -79,7 +233,7 @@ def marginalization_matrix_ref(w):
 def marginalization_matrix(w):
     n = 4**w
     M = np.zeros((4*w,n))
-    for r in tqdm(xrange(4*w),total=4*w):
+    for r in (xrange(4*w)):
         psfm_col = r//4
         run_length = n//(4**(psfm_col+1))
         offset = (r % 4) * run_length
@@ -168,11 +322,11 @@ def plot_ic_vs_pairwise_mi(L,sigmas=interpolate(0.01,10,100),max_h=None,M=None):
     plt.title("Length=%s" % L)
     plt.legend()
     
-def plot_h_vs_ic(L,trials,sigma=1,max_h=None,M=None,xfunc=lambda ps:2*L):
+def plot_h_vs_ic(L,sigmas=interpolate(0.1,10,100),max_h=None,M=None,xfunc=lambda ps:2*L):
     if max_h is None:
         print "generating samples"
         pss = [simplexify_sample(4**L,sigma=sigma)
-               for i in tqdm(range(trials))]
+               for sigma in tqdm(sigmas)]
     else:
         pss = []
         while len(pss) < trials:
@@ -199,20 +353,26 @@ def plot_h_vs_ic(L,trials,sigma=1,max_h=None,M=None,xfunc=lambda ps:2*L):
     # print pearsonr(ics,hs)
     # print spearmanr(ics,hs)
     plt.plot([0,2*L],[0,2*L])
-    plt.plot(*pl(lambda icp:L*icp+2*(L-L**2),[2*(L-1),2*L]))
+    plt.plot(*pl(lambda icp:L*icp+2*(L-L**2),[2*(L-1),2*L]),color='b')
     plt.xlabel("Distribution IC")
     plt.ylabel("PSFM IC")
-    plt.title("Length=%s" % L)
+    plt.title("Distribution vs. Columnwise IC, Length=%s" % L)
             
 def project_to_simplex(v):
     """Project vector v onto probability simplex"""
     ans = v/np.sum(v)
     return ans
 
+def project_to_sphere(v):
+    return v/np.linalg.norm(v)
+    
 def normalize(p):
     """normalize to unit length"""
     return p/((np.linalg.norm(p)))
 
+def simplex_normal(n):
+    return normalize(np.array([1]*n))
+    
 def simplexify(p):
     q = np.exp(p)
     return q/np.sum(q)
@@ -220,8 +380,8 @@ def simplexify(p):
 def simplexify_sample(k,sigma=1):
     return simplexify(np.random.normal(0,sigma,k))
 
-def dirichlet_sample(k,alpha):
-    xs = np.random.gamma(alpha,1,k)
+def dirichlet_sample(K,alpha):
+    xs = np.random.gamma(alpha,1,K)
     Z = np.sum(xs)
     return xs/Z
 
@@ -525,6 +685,7 @@ def plot_bin_col(w,beta,N,sort=True,color='b'):
     plt.plot([2,2*w],[2,2],color='b')
     plt.plot([2*w-2,2*w],[0,2],color='b')
     plt.plot([0,2*w-2],[0,0])
+    plt.scatter(hps,hqs) #new
     plt.xlabel("H_P")
     plt.ylabel("H_Q")
     plt.title("Full vs. Marginal Entropy (K=4^%s)" % w)
@@ -535,6 +696,7 @@ def make_bin_col_plot(filename=None):
     plot_bin_col(10,interpolate(.01,10,100),100,sort=True,color='b')
     plot_bin_col(10,interpolate(.01,10,100),100,sort=False,color='g')
     maybesave(filename)
+    
 def entropy_spectrum(ps,N):
     """
     Sample psfm entropy spectrum, the set of entropies of psfms
@@ -582,7 +744,7 @@ def expected_entropy_ref(K,num_points):
         return f(x)*(1-x)**(K-2)
     return K*(K-1)*mean(integrand(x) for x in interpolate(0,1,num_points))/log(2)
 
-def expected_entropy(K,alpha=1,num_points=10000):
+def expected_entropy(K,alpha=1,num_points=1000):
     """Compute expected entropy of uniform prior on probability simplex on
     K elements through numerical integration"""
     def phi(x):
@@ -592,13 +754,37 @@ def expected_entropy(K,alpha=1,num_points=10000):
             return 0
         else:
             return phi(x)*x**(alpha-1)*(1-x)**((K-1)*alpha-1)
-    prefactor = K*gamma(K*alpha)/(gamma(alpha)*gamma((K-1)*alpha))
+    #prefactor_ref = K*gamma(K*alpha)/(gamma(alpha)*gamma((K-1)*alpha))
+    log_prefactor = log(K) + gammaln(K*alpha) - (gammaln((alpha)) + gammaln((K-1)*alpha))
+    try :
+        prefactor = exp(log_prefactor)
+    except:
+        raise Exception("expected entropy failed on:",K,alpha)
+    #print prefactor,prefactor_ref
     #prefactor = K/(gamma(alpha))*(alpha*(K-1))**alpha
     #print prefactor,approx_prefactor
-    integral = mean(integrand(x) for x in interpolate(0,1,num_points))/log(2)
-    return prefactor*integral
+    # f = lambda x:(alpha*x*log(x)*K-(x+alpha)*log(x)+x-1)/(x*(x-1)*log(x))
+    # f2 = lambda x:(alpha*x*log(x)*K-(x+alpha)*log(x)+x-1)/(x*(x-1)*log(x))
+    # xmax = 1#bisect_interval(f,10**-200,1/2.0)
+    # prudent_num_points = int(10/xmax)
+    # if num_points < prudent_num_points:
+    #     num_points = prudent_num_points
+    #     print "updated num_points to:",num_points
+    #integral_ref = mean(integrand(x) for x in interpolate(0,1,num_points))
+    #xs = interpolate(0,1,num_points)
+    #print "computing xs"
+    xs = [10**x for x in interpolate(-100,0,num_points)]
+    #print len(xs)
+    #print "min x:",xs[1]
+    ys = map(integrand,xs)
+    integral_trap = np.trapz(ys,xs)
+    return prefactor*integral_trap/log(2)
 
-def mutation_matrix_ref(mu,w,mode="continuous"):
+def expected_entropy_mc(K,alpha=1,n=1000):
+    hs = [h_np(dirichlet_sample(K,alpha)) for i in xrange(n)]
+    return mean_ci(hs)
+    
+def mutation_matrix_ref(mu,w,mode="continuous",stochastic=False):
     "mutation matrix for w columns at rate mu"
     K = int(4**w)
     M = np.zeros((K,K))
@@ -609,55 +795,86 @@ def mutation_matrix_ref(mu,w,mode="continuous"):
         """M is a stochastic matrix"""
         res = 1
     for i,kmer_i in enumerate(make_kmers(w)):
-        for j,kmer_j in enumerate(make_kmers(w)):
-            distance = w - sum(zipWith(lambda x,y:x==y,kmer_i,kmer_j))
-            if distance == 0:
-                M[i][j] = res*1 - 3*w*mu
-            elif distance == 1:
-                M[i][j] = mu
-    return M
-
+        sanity = 0
+        if not stochastic or (stochastic and random.random() < mu):
+            for j,kmer_j in enumerate(make_kmers(w)):
+                distance = w - sum(zipWith(lambda x,y:x==y,kmer_i,kmer_j))
+                if distance == 0:
+                    M[i][j] = res - 3*w*mu
+                elif distance == 1:
+                    M[i][j] = mu
+                    sanity += 1
+        else:
+            M[i][i] = res
+    return np.transpose(M)
+        
 def mutate_ref(ps,t,mu=None,M=None):
     if M is None:
         L = int(log(len(ps),4))
         M = mutation_matrix_ref(mu,L)
-    return scipy.linalg.expm(M*t).dot(ps)
+    return np.squeeze(np.asarray(scipy.linalg.expm(M*t).dot(ps)))
 
+def mutate_inf(ps):
+    """Return """
+    pass
+    
 def mutate(ps,t,M):
     eigvals,eigvecs = np.linalg.eig(M)
     Q = np.matrix(eigvecs)
-    return Q.dot(np.diag(np.exp(eigvals*t))).dot(np.linalg.inv(Q)).dot(ps)
+    return np.squeeze(np.asarray((Q.dot(np.diag(np.exp(eigvals*t))).dot(np.linalg.inv(Q)).dot(ps))))
 
-def flow_diagram(L,sigmas=interpolate(0.0005,0.01,10),steps=100):
-    pss = [dirichlet_sample(4**L,sigma) for sigma in sigmas]
-    Mut = mutation_matrix_ref(0.01,L,mode='discrete')
+def flow_diagram(L,band,band_tol,sigmas=interpolate(0.0005,0.01,10),steps=1,show=False,mu=10**-3,disp_fact=0.1):
+    """Gather trajectories as they pass through ICp band"""
+    print "sampling"
+    pss = [dirichlet_sample(4**L,sigma) for sigma in tqdm(sigmas)]
+    Mut = mutation_matrix_ref(mu,L,mode='discrete')
     Mar = marginalization_matrix(L)
+    band_bin = []
     delta_icps = []
     delta_icqs = []
-    for sigma in sigmas:
+    def mut_dist(ps):
+        mut_ps = Mut.dot(ps)
+        return h_np(ps) - h_np(mut_ps)
+    all_ps = []
+    def icp(ps):
+        return 2*L-h_np(ps)
+    def icq(ps):
+        return ic(ps,M=Mar)
+    for sigma in tqdm((sigmas)):
         ps = dirichlet_sample(4**L,sigma)
-        pps = queify(ps)
-        icps = [total_ic(ps)]
-        icqs = [2*L-psfm_entropy(ps,Mar)]
-        icpps = [total_ic(pps)]
-        icqps = [2*L-psfm_entropy(pps,Mar)]
-        for step in xrange(steps):
+        all_ps.append(ps)
+        for i,step in enumerate(xrange(steps)):
             ps = Mut.dot(ps)
-            pps = Mut.dot(pps)
-            icps.append(total_ic(ps))
-            icqs.append(2*L-psfm_entropy(ps,Mar))
-            icpps.append(total_ic(pps))
-            icqps.append(2*L-psfm_entropy(pps,Mar))
-        plt.plot(icps,icqs,color='r')
-        plt.plot(icpps,icqps,color='g')
+            if i % 10 == 0: # collect every tenth step
+                all_ps.append(ps.copy())
+    cmap = plt.get_cmap('jet')
+    divergences = {}
+    for p in tqdm(all_ps):
+        pp = Mut.dot(p)
+        #print p,pp
+        x,y = icp(p),icq(p)
+        dx, dy = disp_fact*(icp(pp)-x),disp_fact*(icq(pp)-y)
+        d = abs(dx) #sqrt(dx**2 + dy**2)
+        plt.arrow(x,y,dx,dy,color=cmap(100/0.7*d))
+        divergences[(x,y)] = d
     plt.plot([0,2*L-2],[0,0],color='b')
     plt.plot([0,2],[0,2*L],color='b')
     plt.plot([2,2*L],[2*L,2*L],color='b')
     plt.plot([2*L-2,2*L],[0,2*L],color='b')
     plt.xlabel("ICp")
     plt.ylabel("ICq")
-    plt.show()
-        
+    # plt.show()
+    return divergences
+    # elif show == 1:
+    #     for ps in band_bin:
+    #         mut_ps = Mut.dot(ps)
+    #         print ic
+    #         print [total_ic(ps),total_ic(mut_ps)],[ic(ps),ic(mut_ps)]
+    #         plt.plot([total_ic(ps),total_ic(mut_ps)],[ic(ps),ic(mut_ps)])
+    #     plt.show()
+    # else:
+    #     return band_bin
+    
 def mutation_matrix_experiment(L,N):
     mu = 0.01
     time = 1
@@ -670,5 +887,326 @@ def mutation_matrix_experiment(L,N):
     print "dkl_qs"
     dkl_qs = [dkl(ps,queify(ps,M)) for ps in pss]
     plt.scatter(dkl_qs,dkl_muts)
+
+def find_theta(ps,qs):
+    return acos(ps.dot(qs)/sqrt(ps.dot(ps)*qs.dot(qs)))
     
-print "loaded"
+def test_isocontour_projection_hypothesis():
+    """
+    Conjecture: entropy isocontours given by projection of centered
+    circles on unit sphere onto probability simplex.
+
+    Conclusion: doesn't work
+    """
+    K = 3
+    p = simplexify_sample(K)
+    n = project_to_sphere(np.array([1.0/K]*K))
+    theta = find_theta(p,n) # in radians
+    ps = [np.asarray(general_rotation_matrix(n,theta).dot(p))[0] for theta in interpolate(0,2*pi,100)]
+
+def general_rotation_matrix(u,theta):
+    ux,uy,uz = u
+    M =  np.matrix([[cos (theta) +ux**2*(1-cos (theta)) , ux *uy* (1-cos (theta)) - uz* sin (theta) , ux* uz* (1-cos (theta)) + uy *sin (theta)],
+                    [uy* ux* (1-cos (theta)) + uz* sin (theta) , cos (theta) + uy**2*(1-cos (theta)) , uy *uz* (1-cos (theta)) - ux* sin (theta)],
+                    [uz* ux* (1-cos (theta)) - uy *sin (theta) , uz* uy* (1-cos (theta)) + ux *sin (theta) , cos (theta) + uz**2*(1-cos (theta))]])
+    return M
+
+def integrate_lagrange_equations(q0=None,K=None,alpha=1,steps=1000,dt=0.01,v=None):
+    #lamb = -6
+    #q = np.array([0.5,0.25,0.25])
+    if q0 is None:
+        q = dirichlet_sample(K,alpha)
+    else:
+        q = q0.copy()
+    g = grad(q)
+    if v is None:
+        ep = np.random.normal(np.log(q),scale=0.01)
+        exps = np.exp(ep)
+        u = exps/np.sum(exps)
+        #print "us:",us
+        v = u - q
+    p = v - v.dot(g)/g.dot(g)*g
+    #p = np.zeros(3)
+    H0 = h_np(q)
+    def dpdt(q):
+        return -(H0-h_np(q))*(np.log(q) - np.sum(np.log(q)/len(q)))
+    def dqdt(p):
+        return p
+    history = [q]
+    for i in xrange(steps):
+        deltaq = dqdt(p)
+        deltap = dpdt(q)
+        q,p = q + deltaq*dt,p + deltap*dt
+        if i % 1000 == 0:
+            print q,p,np.sum(q),h_np(q)
+        history.append(q.copy())
+    return history
+
+def squeeze_info_into_q(ps):
+    hp = h_np(ps)
+    L = int(log(len(ps),4))
+    psfm = sample_qs(L,hp)
+    qs = qs_from_psfm(psfm)
+    v = qs - ps
+
+def integrate_lagrange_with_rk4(q0,qp0=None,steps=1000,dt=0.01):
+    K = len(q0)
+    H0 = h_np(q0)
+    if qp0 is None:
+        ep = np.random.normal(np.log(q0),scale=0.01)
+        exps = np.exp(ep)
+        u = exps/np.sum(exps)
+        #print "us:",us
+        v = u - q0
+        g = grad(q0)
+        p = v - v.dot(g)/g.dot(g)*g
+    qp = np.hstack([q0,p])
+    def dpdt(q):
+        discrepancy = -(H0-h_np(q))
+        entropy_gradient = (np.log(q) - np.sum(np.log(q)/len(q)))
+        return discrepancy * entropy_gradient
+        
+    def dqdt(p):
+        return p
+    def f(qp):
+        q = qp[:K]
+        p = qp[K:]
+        qp = dqdt(p)
+        pp = dpdt(q)
+        return np.hstack([qp,pp])
+    return [x[:K] for x in rk4(f,qp,steps,dt)]
+    
+def rk4(f,y0,n,dt=0.01):
+    """
+    integrate (autonomous ODE) y' = f(y) subject to y(0) = y0 for n steps 
+    """
+    ys = [y0]
+    for i in xrange(n):
+        yn = ys[-1]
+        k1 = f(yn)
+        k2 = f(yn + 1/2.0*k1*dt)
+        k3 = f(yn + 1/2.0*k2*dt)
+        k4 = f(yn + k3*dt)
+        ynp1 = yn + dt/6.0*(k1 + 2*k2 + 2*k3+k4)
+        ys.append(ynp1)
+    return ys
+
+def one_point_avg_inner(ps,k):
+    L = int(log(len(ps),4))
+    kmers = list(make_kmers(L))
+    s = kmers[k]
+    acc = 0
+    hits = 0
+    for i,kmer in enumerate(kmers):
+        if hamming(kmer,s) == 1:
+            acc += ps[i]
+            hits += 1
+    assert hits == 3*L
+    return acc/(3*L)
+
+def one_point_avg(ps):
+    return np.array([one_point_average(ps,k) for k in range(len(ps))])
+    
+def num_cols_from_vector(ps):
+    L = int(log(len(ps),4))
+    return L
+    
+def ddpl_dHdt_singular(ps,l):
+    K = len(ps)
+    L = num_cols_from_vector(ps)
+    kmers = list(make_kmers(L))
+    s = kmers[l]
+    term1 = -one_point_avg_inner(ps,l)/(ps[l])
+    term2 = -sum(log(ps[k]) for k in range(K) if hamming(kmers[k],s) == 1)/(3*L)
+    term3 = log(ps[k]) + 1
+    return term1 + term2 + term3
+
+def ddpl_dHdt(ps):
+    return np.array([ddpl_dHdt_singular(ps,l) for l in range(len(ps))])
+
+def normal_vector(K):
+    return np.ones(K)/sqrt(K)
+
+def vector_projection(ps,qs):
+    """return projection of ps onto qs"""
+    return qs/np.linalg.norm(qs) * (ps.dot(qs))
+
+def vector_rejection(ps,qs):
+    """return rejection of ps from qs"""
+    return ps - vector_projection(ps,qs)
+    
+def simplex_restriction(v):
+    """given a vector v, flatten v to simplex, i.e. take vector rejection
+    of v upon simplex normal n"""
+    K = len(v)
+    n = normal_vector(K)
+    # = vector_rejection(v,n)
+    return v - n.dot(v) * n
+
+def simplex_entropy_gradient(ps):
+    """return direction along simplex in which entropy is increasing fastest"""
+    return simplex_restriction(-(np.log(ps) + 1))
+    
+def restrict_to_entropic_isocontour(ps):
+    """take projection of ps onto entropy isocontour"""
+    simplex_grad = simplex_restriction(-(np.log(ps) + 1))
+    return vector_rejection(ps,simplex_grad)
+
+def entropic_isocontour(ps):
+    """return a basis of the subspace of the differential entropy isocontour at ps"""
+    K = len(ps)
+    n = normal_vector(len(ps))
+    grad = simplex_entropy_gradient(ps)
+    # find basis for subspace orthogonal to these two vectors
+    def make_basis_vector(v):
+        C = v.dot(n[2:])
+        D = v.dot(grad[2:])
+        M = np.matrix([n[:2],grad[:2]])
+        Minv = np.linalg.inv(M)
+        res = np.linalg.inv(M).dot(np.array([-C,-D]))
+        v1,v2 = res[0,0],res[0,1]
+        basis_vector = np.hstack([v1,v2,v])
+        return basis_vector
+    vs = [np.array([int(j==i) for j in range(K-2)]) for i in range(K-2)]
+    return [make_basis_vector(v) for v in vs]
+
+def normalize1(ps):
+    """normalize by L1 norm"""
+    return ps/np.sum(ps)
+
+
+def minimize_dHdt(ps):
+    converged = False
+    eta = 10**-10
+    dt = 10**-6
+    hist = []
+    while not converged:
+        print dHdt(ps),sum(ps),h(ps),min(ps)
+        bvs = entropic_isocontour(ps)
+        dHp = dHdt(ps)
+        grad = [(dHdt(ps + bv*dt)-dHp)/dt for bv in bvs]
+        dp = sum(bv*g for (bv,g) in zip(bvs,grad))
+        print "sum dp:",sum(dp)
+        ps = ps + -dp*eta
+        if abs(sum(dp)) < 10**-100:
+            converged = True
+    return ps
+
+def minimize_dHdt_test():
+    L = 4
+    K = int(4**L)
+    for i in range(10):
+        ps = np.array(simplex_sample(K))
+        print "marginalizing"
+        qs = qs_from_psfm(marginalize(ps))
+        print "sampling wtih given entropy"
+        rs = sample_with_given_entropy(K,h(qs),tol_factor=10**-6)
+        print "minimizing"
+        qsp = minimize_dHdt(qs)
+        rsp = minimize_dHdt(rs)
+        print "qs:",dHdt(qs),dHdt(qsp)
+        print "rs:",dHdt(rs),dHdt(rsp)
+        
+def entropy_hessian_experiment():
+    L = 3
+    K = int(4**L)
+    eps = 10**-6
+    ps = np.array(simplex_sample(K))
+    qs = qs_from_psfm(marginalize(ps))
+    rs = sample_with_given_entropy(K,h(qs),tol_factor=10**-2)
+    bvs_p = entropic_isocontour(ps)
+    bvs_q = entropic_isocontour(qs)
+    bvs_r = entropic_isocontour(rs)
+    dHp = dHdt(ps)
+    dHps = [dHdt(normalize1(ps + bvp*eps)) for bvp in bvs_p]
+    dHq = dHdt(qs)
+    dHqs = [dHdt(normalize1(qs + bvq*eps)) for bvq in bvs_q]
+    dHr = dHdt(rs)
+    dHrs = [dHdt(normalize1(rs + bvr*eps)) for bvr in bvs_r]
+    plt.plot(dHps,color='r')
+    plt.plot([dHp]*(K-2),color='r',linestyle='--')
+    plt.plot(dHqs,color='g')
+    plt.plot([dHq]*(K-2),color='g',linestyle='--')
+    plt.plot(dHrs,color='b')
+    plt.plot([dHr]*(K-2),color='b',linestyle='--')
+    plt.show()
+
+def norm_laplacian(L):
+    """given num of columns L, return normalized graph laplacian"""
+    # L = D - A
+    d = 3*L # graph is regular, so degree of each vertex = sqrt(d_i*d_j)
+    Lap = -(mutation_matrix_ref(1,L))/(d) # should we take transpose?  doesn't matter because symmetric.
+    return Lap
+
+def norm_lap(ps):
+    L = num_cols_from_vector(ps)
+    Lap = norm_laplacian(L)
+    return Lap.dot(ps)
+    
+def fourier(ps):
+    """compute fourier transform of ps, returning a vector of coefficients
+    in the basis of eigenvectors of normalized Laplacian:
+    if p = \sum_k c_k v_k, return c.
+    """
+    L = num_cols_from_vector(ps)
+    lambdas, V = np.linalg.eig(norm_laplacian(L))
+    Vinv = np.linalg.inv(V)
+    return Vinv.dot(ps)
+
+def inv_fourier(ps_hat):
+    L = num_cols_from_vector(ps)
+    lambdas, V = np.linalg.eig(norm_laplacian(L))
+    return V.dot(ps_hat)
+
+def fourier_check1():
+    L = 2
+    K = int(4**L)
+    ps = np.array(simplex_sample(K))
+    print "L1 error:",L1(ps,inv_fourier(fourier(ps)))
+    
+def fourier_check2():
+    """verify identity: F[L[p]] = Lambdas*ps_hat"""
+    L = 2
+    K = int(4**L)
+    ps = np.array(simplex_sample(K))
+    Lap = norm_laplacian(L)
+    lambdas, V = np.linalg.eig(norm_laplacian(L))
+    ans1 = fourier(Lap.dot(ps))
+    ps_hat = fourier(ps)
+    ans2 = np.diag(lambdas).dot(ps_hat)
+    print "L1 error:",L1(ans1,ans2)
+
+def fourier_check3():
+    L = 2
+    K = int(4**L)
+    ps = np.array(simplex_sample(K))
+    Lap = norm_laplacian(L)
+    lambdas, V = np.linalg.eig(norm_laplacian(L))
+    ps_hat = fourier(ps)
+    print L1(ps, sum(ph*np.array(v) for ph,v in zip(ps_hat,transpose(V))))
+    
+def L1(ps,qs):
+    return sum(abs(ps-qs))
+
+def cross_h(ps,qs):
+    return -ps.dot(np.log(qs))/log(2)
+    
+def what_is_fourier_independence():
+    L = 2
+    K = int(4**L)
+    diffs = []
+    ps_hats = []
+    qs_hats = []
+    for i in range(100):
+        ps = np.array(simplex_sample(K))
+        qs = qs_from_psfm(marginalize(ps))
+        ps_hat = fourier(ps)
+        qs_hat = fourier(qs)
+        print sum(abs(ps_hat)) >= sum(abs(qs_hat)) # always true!
+        ps_hats.append(ps_hat)
+        qs_hats.append(qs_hat)
+    diffs = ([ps_hat - qs_hat for (ps_hat,qs_hat) in zip(ps_hats,qs_hats)])
+    plt.plot(transpose(diffs))
+    # coefficients 0,3,4,5,9,10,11 are the same, so must control columnwise probabilities (8-1 = 7 df)
+    return ps_hats,qs_hats
+        #diffs.append((ps - qs))
