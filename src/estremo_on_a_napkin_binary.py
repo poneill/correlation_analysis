@@ -2,11 +2,12 @@ import numpy as np
 import random
 from simplex_sampling_experiment import make_kmers,h_np
 from estremo_on_a_napkin import sample_eps,boltzmann
-from utils import random_site,inverse_cdf_sample,mean,motif_ic,h,transpose,rslice,pairs,log2
+from utils import random_site,inverse_cdf_sample,mean,motif_ic,h,transpose,rslice,pairs,log2,total_motif_mi
 from tqdm import tqdm,trange
 from math import exp,log
 from matplotlib import pyplot as plt
-import seaborn as sbn
+#import seaborn as sbn
+import scipy
 from collections import defaultdict
 from sde import ou_relaxation_time_from_sample,is_stationary
 
@@ -127,12 +128,19 @@ def sample_species():
 def make_ringer():
     return (["A"*L for _ in range(n)],np.array([1]+[0]*(K-1)))
 
+def make_mi_ringer():
+    sites = (["AT"+"A"*(L-2) for _ in range(n/2)] + 
+             ["TA"+"A"*(L-2) for _ in range(n/2)])
+    rec = np.zeros(K)
+    for site in sites:
+        rec[idx_of_word[site]] = 1
+    return (sites, rec)
+    
 def rec_h(rec):
     p = np.sum(rec)/float(len(rec))
     return h([p,1-p])
 
-def main_experiment(turns=10000):
-    N=1000
+def main_experiment(turns=10000,N=1000,hist_modulus=100,print_modulus=1000):
     site_muts = [10**-i for i in range(-2,4)]
     rec_muts = [10**-i for i in range(-2,4)]
     results_dict = {}
@@ -140,47 +148,47 @@ def main_experiment(turns=10000):
         for rec_mut in rec_muts:
             print "starting on:",site_mut,rec_mut
             converged = False
-            pop = None
-            hist = []
+            scratch_pop = None
+            ring_pop = None
+            scratch_hist = []
+            ring_hist = []
             while not converged:
-                pop,new_hist = moran_process(N=N,mean_site_muts=site_mut,mean_rec_muts=rec_mut,
-                                             init=make_ringer,pop=pop,hist_modulus=100)
-                hist.extend(new_hist)
-                fits = np.array([row[2] for row in hist])
-                print "len fits:",len(fits)
-                rel_time = ou_relaxation_time_from_sample(fits)
-                print "estimated rel time:",rel_time,"vs:",len(hist)
-                test_fits = fits[-len(new_hist):]
-                print "test fits:",len(test_fits),mean(test_fits),mean(np.diff(test_fits))
-                if is_stationary(test_fits):
-                    converged = True
-                else:
-                    print "has not converged; continuing"
+                print "ringer"
+                pop,hist = moran_process(N=N,turns=turns,mean_site_muts=site_mut,mean_rec_muts=rec_mut,
+                                                             init=make_ringer,pop=ring_pop,
+                                                             hist_modulus=hist_modulus,print_modulus=print_modulus)
+                converged = True
             results_dict[(site_mut,rec_mut)] = [pop,hist[:]]
     return results_dict
 
-def interpret_main_experiment(results_dict,idx,f=None):
+def interpret_main_experiment(results_dict,f=None):
     site_muts,rec_muts = map(lambda x:sorted(set(x)),transpose(results_dict.keys()))
-    mat = np.zeros((len(site_muts),len(rec_muts)))
-    for i,site_mut in enumerate(sorted(site_muts)):
-        for j,rec_mut in enumerate(sorted(rec_muts)):
-            pop,hist = results_dict[(site_mut,rec_mut)]
-            if f is None:
-                last = hist[-1]
-                mat[i,j] = last[idx]
-                print i,j,site_mut,rec_mut,mat[i,j]
-            else:
-                mat[i,j] = mean([f(x) for x,fit in pop])
-                print i,j,mat[i,j]
-    plt.imshow(mat,interpolation='none')
-    plt.xticks(range(len(rec_muts)),map(str,rec_muts))
-    plt.yticks(range(len(site_muts)),map(str,site_muts))
-    #plt.yticks(rec_muts)
-    plt.xlabel("rec mutation rate")
-    plt.ylabel("site mutation rate")
-    plt.colorbar()
-    title = "turn,f,mean_fits,mean_dna_ic,mean_rec,mean_recced".split(',')[idx]
-    plt.title(title)
+    for idx in range(1,7+1):
+        if idx == 6:
+            f = recognizer_non_linearity
+        elif idx == 7:
+            f = motif_non_linearity
+        mat = np.zeros((len(site_muts),len(rec_muts)))
+        for i,site_mut in enumerate(sorted(site_muts)):
+            for j,rec_mut in enumerate(sorted(rec_muts)):
+                pop,hist = results_dict[(site_mut,rec_mut)]
+                if f is None:
+                    last = hist[-1]
+                    mat[i,j] = last[idx]
+                    print i,j,site_mut,rec_mut,mat[i,j]
+                else:
+                    mat[i,j] = mean([f(x) for x,fit in pop])
+                    print i,j,mat[i,j]
+        plt.subplot(3,3,idx)
+        plt.imshow(mat,interpolation='none')
+        plt.xticks(range(len(rec_muts)),map(str,rec_muts))
+        plt.yticks(range(len(site_muts)),map(str,site_muts))
+        #plt.yticks(rec_muts)
+        plt.xlabel("rec mutation rate")
+        plt.ylabel("site mutation rate")
+        plt.colorbar()
+        title = "turn f mean_fits mean_dna_ic mean_rec mean_recced rec_nonlinearity motif_nonlinearity".split()[idx]
+        plt.title(title)
     plt.show()
 
 def interpret_main_experiment2():
@@ -221,6 +229,29 @@ def moran_process(N=1000,turns=10000,mean_site_muts=1,mean_rec_muts=1,init=sampl
                 print turn,"sel_fit:",f,"mean_fit:",mean_fits,"mean_dna_ic:",mean_dna_ic,"mean_rec_prom:",mean_rec
     return pop,hist
 
+def rare_mutation_process(N=1000,turns=10000,mean_site_muts=1,mean_rec_muts=1,init=sample_species,x0=None):
+    if x0 is None:
+        x = init()
+    else:
+        x = x0
+    f = fitness(x)
+    site_mu = min(1/float(n*L) * mean_site_muts,1)
+    rec_mu = min(1/float(K) * mean_rec_muts,1)
+    proposed_mutants = 0
+    for turn in xrange(turns):
+        xp = mutate(x,site_mu,rec_mu)
+        fp = fitness(xp)
+        if f == fp:
+            ar = 1.0/N
+        else:
+            proposed_mutants += 1
+            ar = (1 - f/fp)/(1-(f/fp)**N)
+            #print turn,f,fp,ar,proposed_mutants/float(turn+1)
+        if random.random() < ar:
+            print turn,"accepted:",f,"->",fp,ar,proposed_mutants/float(turn+1),sites_recognized(x),recognizer_promiscuity(x)
+            x,f = xp,fp
+    return x
+    
 def recognizer_non_linearity((sites,recognizer)):
     L = log(len(idx_of_word),4)
     motif = [w for w,i in idx_of_word.items() if recognizer[i]]
@@ -231,7 +262,8 @@ def recognizer_non_linearity((sites,recognizer)):
         col_info = motif_ic(motif,correct=False)
         return total_info - col_info
     
-        
+def motif_non_linearity((sites,recognizer)):
+    return total_motif_mi(sites)
     
 def collapsed_moran_process(N,turns,init=sample_species,mutate=mutate,fitness=fitness,ancestor=None,modulus=100):
     if ancestor is None:

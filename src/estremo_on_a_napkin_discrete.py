@@ -28,7 +28,7 @@ def occs_ref(sites,eps):
     occs = boltzmann(all_eps)
     return occs[:len(sites)]
 
-def occs(sites,eps):
+def occs(sites,eps,mode='binary'):
     site_eps = np.array([eps[idx_of_word[site]] for site in sites])
     Zb = background_Z(eps)
     site_exps = np.exp(-site_eps)
@@ -71,11 +71,9 @@ def sample_species():
     return (sample_sites(),sample_eps())
 
 def moran_process(N=1000,turns=10000,init=sample_species,mutate=mutate,fitness=fitness,pop=None):
-    #ringer = (np.array([1]+[0]*(K-1)),sample_eps())
     if pop is None:
         pop = [(lambda spec:(spec,fitness(spec)))(sample_species())
                for _ in trange(N)]
-    #pop = [(ringer,fitness(ringer)) for _ in xrange(N)]
     hist = []
     for turn in xrange(turns):
         fits = [f for (s,f) in pop]

@@ -18,15 +18,21 @@ def fitness((qs,eps)):
     ps = exps/Z
     return 4*log(L,2)-(h_np(ps))
 
+def experimental_entropy_ref((qs,eps),G):
+    exps = np.exp(-beta*eps)
+    Z = G*np.sum(qs*exps)
+    return -sum(G*q*exp(-beta*ep)/Z*log(exp(-beta*ep)/Z) for q,ep in zip(qs,eps))/log(2)
+
 def experimental_entropy((qs,eps),G):
     exps = np.exp(-beta*eps)
     Z = G*np.sum(qs*exps)
-    return -sum(G*q*exp(-beta*ep)/Z*log(exp(-beta*ep)/Z) for q,ep in zip(qs,eps))
-    
+    ps = exps/Z
+    return -np.sum(G*qs*ps*np.log(ps))/log(2)
+
 def sample_qs(sigma=1):
     return simplexify_sample(K,sigma=sigma)
 
-def sample_eps(sigma=1):
+def sample_eps(sigma=1,K=K):
     return np.random.normal(0,sigma,K)
 
 def sample_species():
@@ -63,5 +69,5 @@ def moran_process(N=1000,turns=10000,mu=10**-3,ep_sigma=10**-3):
     return hist
 
 def boltzmann(eps):
-    exps = np.exp(eps)
+    exps = np.exp(-eps)
     return exps/np.sum(exps)

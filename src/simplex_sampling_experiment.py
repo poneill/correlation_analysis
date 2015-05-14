@@ -87,6 +87,9 @@ def inst_dkl_experiment(L,N=100,dt=10**-6,desired_entropy=None):
     plt.boxplot([p_dkls,q_dkls])
     plt.ylabel = "Dkl against mutation"
     plt.xlabel(["P","Q"])
+
+def sample_ps(K):
+    return np.array(simplex_sample(K))
     
 def sample_qs(L,req_entropy,col_tol = 0.001):
     """Given L and required entropy, sample an independent distribution
@@ -109,6 +112,9 @@ def sample_qs(L,req_entropy,col_tol = 0.001):
     #return cols
     return qs_from_psfm(cols)
 
+def qs_from(ps):
+    return qs_from_psfm(marginalize(ps))
+    
 def isocontour_walk(ps0,step_size=10**-2,steps=10,tol=0.01):
     """perform random walk along entropy isocontour"""
     ps = np.copy(ps0)
@@ -193,6 +199,15 @@ def qs_from_psfm(psfm):
         else:
             qs[k] = 0
     return qs
+
+def qs_from_psfm_spec(psfm):
+    return reduce(np.kron,psfm)
+
+def kronecker_test(L=2):
+    K = int(4**L)
+    ps = np.array(simplex_sample(K))
+    psfm = marginalize(ps)
+    return L1(qs_from_psfm(psfm),qs_from_psfm_spec(psfm))
     
 def marginalize_ref(ps):
     """turn ps into a psfm"""
@@ -212,9 +227,7 @@ def marginalize(ps,M=None):
         M = marginalization_matrix(w)
     v = M.dot(ps)
     return np.reshape(v,(w,4))
-
-def marginalize_spec(ps):
-    vander = np.vander(ps)
+    
     
 def make_kmers(w):
     return ("".join(word) for word in (product(*["ACGT" for i in range(w)])))
@@ -229,7 +242,7 @@ def marginalization_matrix_ref(w):
             if kmer[psfm_col] == base:
                 M[r][c] = 1
     return M
-
+    
 def marginalization_matrix(w):
     n = 4**w
     M = np.zeros((4*w,n))
@@ -1142,6 +1155,12 @@ def norm_lap(ps):
     L = num_cols_from_vector(ps)
     Lap = norm_laplacian(L)
     return Lap.dot(ps)
+
+def norm_lap_form(ps):
+    """return ps^T L ps"""
+    L = num_cols_from_vector(ps)
+    Lap = norm_laplacian(L)
+    return ps.dot(Lap).dot(ps)
     
 def fourier(ps):
     """compute fourier transform of ps, returning a vector of coefficients
@@ -1184,12 +1203,29 @@ def fourier_check3():
     lambdas, V = np.linalg.eig(norm_laplacian(L))
     ps_hat = fourier(ps)
     print L1(ps, sum(ph*np.array(v) for ph,v in zip(ps_hat,transpose(V))))
+
+def laplacian_sanity_check():
+    L = 2
+    K = int(4**L)
+    Lap = norm_laplacian(L)
+    lambdas, V = np.linalg.eig(norm_laplacian(L))
+    for l,v in zip(lambdas,V.transpose()):
+        #eigenvectors are columns of v.  iteration over v iterates over rows by default!
+        print L1(Lap.dot(v),l*v)
     
 def L1(ps,qs):
     return sum(abs(ps-qs))
 
 def cross_h(ps,qs):
     return -ps.dot(np.log(qs))/log(2)
+
+def deriv(ps):
+    return -norm_lap(1 + np.log(ps))
+
+def recover_ps(L,lamb,mu):
+    Lap = norm_laplacian(L)
+    K = int(4**L)
+    return np.exp(-np.linalg.inv((lamb*np.eye(K)-Lap)).dot(mu*np.ones(K))-1)
     
 def what_is_fourier_independence():
     L = 2

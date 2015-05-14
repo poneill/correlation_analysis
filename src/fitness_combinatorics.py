@@ -116,18 +116,31 @@ def fitness_distribution(n,L):
     return f_dict
 
 def log_sum(log_xs):
-    """Given log_xi = log(Xi), return log(sum(s))"""
+    """Given log_xi = log(Xi), return log(sum(Xs))"""
     return reduce(lambda x,y:x+log(1+exp(y-x)),log_xs)
+
+def log_partition(xs):
+    """from the relation Z = sum(exp(x) for x in xs), find y such that y = log(Z), or exp(y) = Z"""
+    xm = max(xs)
+    return xm + log(sum(exp(x-xm) for x in xs))
     
 def plot_fitness_distribution(f_dict):
     plt.scatter(*transpose([(i,v) for i,v in f_dict.items()]))
     
-def max_ent_mean_fitness(n,L,f_mean,f_dict=None,tol=10**-2):
+def max_ent_mean_fitness(n,L,f_mean,f_dict=None,eta=10**-2,tol=10**-2,lamb0=1):
     """Given a value of mean fitness, return a maximum entropy distribution over genotype space."""
     if f_dict is None:
         log_N = log_total_num_genotypes(n,L)
         f_freqs = {k:log_pop-log_N for k,log_pop in fitness_frequencies().items()}
-    lamb = 1
+    lamb = lamb0
     err = 1
+    def log_Z(lamb):
+        return log_partition([lamb*f+log_pop for f,log_pop in f_dict.items()])
     while err > tol:
-        y = sum(exp(lamb*x)*log_pop for x,log_pop in f_dict.items())
+        log_Z = log_Z(lamb)
+        f_hat = sum(f*exp(lamb*f+log_pop-log_Z) for f,log_pop in f_dict.items())
+        lamb += (f_mean-f_hat)*eta
+        err = abs(f_mean-f_hat)
+        print f_hat,lamb
+    return lamb
+        
