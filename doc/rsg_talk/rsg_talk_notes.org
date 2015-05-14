@@ -1,0 +1,19 @@
+
+* Background
+  What are TFs, why are they important?
+
+* Recognition
+  - Linear models are popular because linearization of energy function
+  - But are there other reasons?
+  - Perhaps linearity is selected for due to robustness to mutation
+
+* Formalizing mutational robustness
+  - Motif defined as probability distribution over Lmers
+  - Jukes Cantor diffusion model carries probability current between nodes
+    - write system of ODEs
+  - dH/dt or instantaneous Dkl?  Seems like Dkl would be better for this?
+ 
+* Graph Laplacian
+  - L = D - A
+  - fourier transform
+  - show that GL simplifies ODE system
