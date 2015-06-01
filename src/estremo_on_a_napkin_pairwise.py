@@ -20,19 +20,20 @@ L = 6
 beta = 1
 K = 4**L
 G = 5*10**6
-AAS = 5
-
-nuc_pairs = [(b1,b2) for b1 in "ACGT" for b2 in "ACGT"]
+num_aas = 5
+aas = range(num_aas)
+nucs = "ACGT"
+nuc_pairs = [(b1,b2) for b1 in nucs for b2 in nucs]
 
 def sample_code(sigma=1):
-    return {(aa,b1,b2):random.gauss(0,sigma) for aa in range(AAS) for (b1,b2) in nuc_pairs}
+    return {(aa,b1,b2):random.gauss(0,sigma) for aa in aas for (b1,b2) in nuc_pairs}
 
 def score_site(code,bd,site):
     return sum(code[aa,n1,n2] for aa,(n1,n2) in zip(bd,pairs(site)))
 
 def approximate_max_fitness(N=100000):
     """Approximate max fitness from sample, assuming fitnesses log-normally distributed"""
-    log_num_bds = (L-1) * log(AAS)
+    log_num_bds = (L-1) * log(num_AAS)
     log_num_motifs = L*n * log(4)
     log_num_genotypes = log_num_bds + log_num_motifs
     random_fits = ([fitness(sample_species()) for i in trange(N)])
@@ -69,6 +70,21 @@ def make_ringer(code):
     sites = ["".join(concat([(b1,b2) for j in range(L/2)])) for i in range(n)]
     return bd,sites
 
+def make_ringer_viterbi(code):
+    """Make ringer using viterbi algorithm"""
+    etas = []
+    etas.append({x3:min(code[aa,x1,x3] for x1 in nucs for aa in aas) for x3 in nucs})
+    for i in range(1,L):
+        print i
+        d = {xnp1:min(code[aa,xn,xnp1] + etas[i-1][xn] for xn in nucs for aa in aas) for xnp1 in nucs}
+        etas.append(d)
+    binding_site = "".join([min(nucs,key=lambda n:eta[n]) for eta in etas])
+    sites = [binding_site for i in range(n)]
+    bd = [min(aas,key=lambda aa:code[aa,n1,n2]) for n1,n2 in pairs(binding_site)]
+    return bd,sites
+        
+    
+
 def make_ringer_spec(code):
     def aa_mu(aa):
         return mean([code[aa,b1,b2] for b1,b2 in nuc_pairs])
@@ -77,7 +93,7 @@ def make_ringer_spec(code):
     (aa,b1,b2),min_score = min(code.items(),key=lambda ((aa,b1,b2),score):score - aa_mu(aa) + (aa_sigma(aa)**2)/2.0)
     
 def sample_species():
-    bd = [random.randrange(AAS) for i in range(L-1)]
+    bd = [random.choice(aas) for i in range(L-1)]
     sites = sample_sites(n,L)
     return (bd,sites)
 
@@ -112,7 +128,7 @@ def main(turns=1000000):
     sigmas = [10**i for i in np.linspace(-3,1,5)]
     for mutation_rate in mutation_rates:
         for sigma in sigmas:
-            print "starting on:","mutation rate:",mutation_rate,"sigma:",sigma
+            print "starting on:","mutation rate:","%1.3e" % mutation_rate,"sigma:","%1.3e" % sigma
             code = sample_code(sigma)
             pop,hist = moran_process(code,mutation_rate,
                                      init=lambda :make_ringer(code),
@@ -123,13 +139,13 @@ def main(turns=1000000):
 
 
 def pop_fitness(pop,code):
-    return mean(f(spec,code) for spec in pop)
+    return mean(fitness(code,spec) for (spec,fit) in pop)
 
 def pop_ic(pop,code):
-    return mean(motif_ic(extract_sites(spec),correct=False) for spec in pop)
+    return mean(motif_ic(extract_sites(spec),correct=False) for (spec,fit) in pop)
 
 def pop_mi(pop,code):
-    return mean(total_motif_mi(extract_sites(spec),correct=False) for spec in pop)
+    return mean(total_motif_mi(extract_sites(spec)) for (spec,fit) in pop)
 
 def pop_total(pop,code):
     return pop_ic(pop,code) + pop_mi(pop,code)
@@ -145,13 +161,13 @@ def interpret_main_experiment(results_dict):
         mat = np.zeros((len(mutation_rates),len(sigmas)))
         for i,mutation_rate in enumerate(sorted(mutation_rates)):
             for j,sigma in enumerate(sorted(sigmas)):
-                pop,hist,code = results_dict[(rec_mut,site_mut)]
+                pop,hist,code = results_dict[(mutation_rate,sigma)]
                 mat[i,j] = f(pop,code)
                 print i,j,mat[i,j]
         plt.subplot(subplot_dimension,subplot_dimension,idx)
         plt.imshow(mat,interpolation='none')
-        plt.xticks(range(len(site_muts)),map(str,site_muts))
-        plt.yticks(range(len(rec_muts)),map(str,rec_muts))
+        plt.xticks(range(len(sigmas)),map(str,sigmas))
+        plt.yticks(range(len(mutation_rates)),map(str,mutation_rates))
         #plt.yticks(rec_muts)
         plt.xlabel("sigma")
         plt.ylabel("mutation rate")
