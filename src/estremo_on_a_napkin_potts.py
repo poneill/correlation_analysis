@@ -78,6 +78,8 @@ def mutate_bd(bd,bd_mu):
     return new_bd
 
 def mutate_sites_spec(sites,site_mu):
+    n = len(sites)
+    L = len(sites[0])
     muts = np.random.binomial(n*L,site_mu)
     if muts == 0:
         return sites
@@ -206,3 +208,4 @@ def rec_site_mi((bd,sites),correct=False):
     xs = [b for b in bd for s in sites]
     ys = [s for col in transpose(sites) for s in col]
     return mi(xs,ys,correct=correct)
+
