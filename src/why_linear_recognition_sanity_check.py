@@ -4,8 +4,12 @@ import random
 from math import exp,log,sqrt
 import numpy as np
 import inspect
+from matplotlib import pyplot as plt
 
 G = 5*10**6
+
+def prod(xs):
+    return reduce(lambda x,y:x*y,xs)
 
 def ln_mean(mu,sigma_sq):
     return exp(mu + sigma_sq/2.0)
@@ -23,7 +27,7 @@ def sample_matrix(L,sigma):
 def occ(sigma,L,G=5*10**6):
     matrix = sample_matrix(L,sigma)
     ef = sum(min(row) for row in matrix)
-    eps = [sum(random.choice(row) for row in matrix) for i in range(G)]
+    eps = [sum(random.choice(row) for row in matrix) for i in xrange(G)]
     Zb = sum(exp(-ep) for ep in eps)
     actual_occ = exp(-ef)/(exp(-ef)+Zb)
     # predicted_Zb = exp(L*sigma**2/2.0 + log(G))
@@ -32,18 +36,35 @@ def occ(sigma,L,G=5*10**6):
     #print "predicted occ: %1.3e actual occ: %1.3e" % (predicted_occ,actual_occ)
     return actual_occ
 
+
+def exact_occ(matrix,G):
+    fg = exp(-sum(min(row) for row in matrix))
+    Zb = G*exact_mean_Zb(matrix)
+    return fg/(fg+G*Zb)
+
+def exact_mean_Zb(matrix):
+    """return Zb up to constant G"""
+    L = len(matrix)
+    Zb = prod(sum(exp(-ep) for ep in row) for row in matrix)/(4**L)
+    return Zb
+
 def sample_Zb(G,L,sigma):
-    matrix = [[random.gauss(0,sigma) for j in range(4)] for i in range(L)]
-    eps = [sum(random.choice(row) for row in matrix) for i in range(G)]
+    eps = sample_eps(G,L,sigma)
     Zb = sum(exp(-ep) for ep in eps)
     return Zb
 
+def sample_eps(G,L,sigma):
+    matrix = [[random.gauss(0,sigma) for j in range(4)] for i in range(L)]
+    eps = [sum(random.choice(row) for row in matrix) for i in range(G)]
+    return eps
+
 def predict_Zb(G,L,sigma):
-    return G*exp(L*sigma**2/2.0)
+    site_sigma_sq = 3/4.0 * L * sigma**2
+    return G*exp(0+site_sigma_sq/2.0)
 
 def predict_Zb2(G,L,sigma):
     site_mu = 0
-    site_sigma_sq = 3/4.0 * L * sigma
+    site_sigma_sq = 3/4.0 * L * sigma**2 # changed this from sigma
     expect = G*exp(site_sigma_sq/2.0)
     var = G*(exp(site_sigma_sq)-1)*exp(site_sigma_sq)
     return expect,sqrt(var)
@@ -108,13 +129,13 @@ def mean_occ3(sigma,L,G=5*10**6,terms=2):
         return 1/(1+G*exp(-L*sigma))
     a = exp(L*sigma)
     term0 = a/(a + G)
-    term2_ref = sigma**2*L*(a*G/4*(a*G/4 - (a + G))/((a + G)**3))
+    term2 = sigma**2*L*(a*G/4*(a*G/4 - (a + G))/((a + G)**3))
     Zb = G
     dZb = -G/4.0
     d2Zb = G/4.0
     term2_ref2 = (sigma**2 * L * (2*a*dZb**2)/((Zb + a)**3) - a*d2Zb/((Zb + a)**2))/2.0
     term2_ref3 = (L*sigma**2*G*exp(L*sigma))/(2*(exp(L*sigma)+G)**2)*(G/(2*(exp(L*sigma) + G)**2) - 1)
-    term2 = 1/2*4*L*sigma**2*(2*exp(L*sigma)*G**2/16.0)/(exp(L*sigma)+G)**3 - (exp(L*sigma)*G/4.0)/(exp(L*sigma)+G)**2
+    #term2 = 1/2*4*L*sigma**2*(2*exp(L*sigma)*G**2/16.0)/(exp(L*sigma)+G)**3 - (exp(L*sigma)*G/4.0)/(exp(L*sigma)+G)**2
     #print L,sigma,term0,term2, term0 + term2,abs(term2 - term2_ref3)
     if terms == 2:
         return term0 + term2
@@ -132,13 +153,16 @@ def mode_occ(sigma,L,G=5*10**6):
     return exp(-ef)/(exp(-ef) + Zb)
 
     
-def occ_matrix(G=10**3):
+def occ_matrix(G=10**3,occ_f=occ,plot=True):
     Ls = range(1,31)
     sigmas = np.linspace(0,5,100)
-    M = np.matrix([[occ(sigma,L,G=G) for L in Ls] for sigma in tqdm(sigmas)])
-    plt.imshow(M,aspect='auto',interpolation='none')
-    plt.xticks(Ls)
-    plt.yticks(range(len(sigmas)),sigmas)
+    M = np.matrix([[occ_f(sigma,L,G=G) for L in Ls] for sigma in tqdm(sigmas)])
+    if plot:
+        plt.imshow(M,aspect='auto',interpolation='none')
+        plt.xticks(Ls)
+        plt.yticks(range(len(sigmas)),sigmas)
+    return M
+    
 
 def plot_matrix(matrix,colorbar=True,show=True):
     plt.imshow(matrix,aspect='auto',interpolation='none')
@@ -182,3 +206,84 @@ def test_integrate_multivariate_normal(trials=1000):
     print "pred:",pred
     print "obs:",obs
     
+def dZdi_ref(matrix,i,delta=0.01):
+    """given an epsilon matrix and an index i, give dZ/deps_i numerically"""
+    dmatrix = [row[:] for row in matrix]
+    dmatrix[i/4][i%4] += delta
+    Zb = exact_mean_Zb(matrix)
+    dZb = exact_mean_Zb(dmatrix)
+    return (dZb - Zb)/delta
+
+def dZdi(matrix,i):
+    row_idx = i//4
+    col_idx = i%4
+    _matrix = [row for i,row in enumerate(matrix) if not i == row_idx]
+    ep = matrix[row_idx][col_idx]
+    return -exp(-ep)*exact_mean_Zb(_matrix)/4
+
+def dZdii_ref(matrix,i,delta=0.01):
+    """given an epsilon matrix and an index i, give dZ/deps_i numerically"""
+    dmatrix_b = [row[:] for row in matrix]
+    dmatrix_f = [row[:] for row in matrix]
+    dmatrix_b[i/4][i%4] -= delta
+    dmatrix_f[i/4][i%4] += delta
+    Zb = exact_mean_Zb(matrix)
+    dZb_b = exact_mean_Zb(dmatrix_b)
+    dZb_f = exact_mean_Zb(dmatrix_f)
+    return (dZb_b - 2* Zb + dZb_f)/delta**2
+
+def dZdii(matrix,i):
+    row_idx = i//4
+    col_idx = i%4
+    _matrix = [row for i,row in enumerate(matrix) if not i == row_idx]
+    ep = matrix[row_idx][col_idx]
+    return exp(-ep)*exact_mean_Zb(_matrix)/4
+
+def dZdij_ref(matrix,i,j,delta=0.01):
+    """given an epsilon matrix and an index i, give dZ/deps_i numerically"""
+    dmatrix_ff = [row[:] for row in matrix]
+    dmatrix_fb = [row[:] for row in matrix]
+    dmatrix_bf = [row[:] for row in matrix]
+    dmatrix_bb = [row[:] for row in matrix]
+    dmatrix_ff[i/4][i%4] += delta
+    dmatrix_ff[j/4][j%4] += delta
+    
+    dmatrix_fb[i/4][i%4] += delta
+    dmatrix_fb[j/4][j%4] -= delta
+    
+    dmatrix_bf[i/4][i%4] -= delta
+    dmatrix_bf[j/4][j%4] += delta
+    
+    dmatrix_bb[i/4][i%4] -= delta
+    dmatrix_bb[j/4][j%4] -= delta
+    dZb_ff = exact_mean_Zb(dmatrix_ff)
+    dZb_fb = exact_mean_Zb(dmatrix_fb)
+    dZb_bf = exact_mean_Zb(dmatrix_bf)
+    dZb_bb = exact_mean_Zb(dmatrix_bb)
+    return (dZb_ff - dZb_fb - dZb_bf + dZb_bb)/(4*(delta**2))
+
+def dZdij(matrix,i,j):
+    if i // 4 == j//4: # if i, j in same row
+        return 0
+    else:
+        row_idx = i//4
+        col_idx = i%4
+        row_jdx = j//4
+        col_jdx = j%4
+        _matrix = [row for i,row in enumerate(matrix)
+                   if not (i == row_idx or i == row_jdx)]
+        epi = matrix[row_idx][col_idx]
+        epj = matrix[row_jdx][col_jdx]
+        return exp(-(epi + epj))/16*exact_mean_Zb(_matrix)
+
+def dZdkk(matrix,i,j):
+    if i == j:
+        return dZdii(matrix,i)
+    else:
+        return dZdij(matrix,i,j)
+    
+def Z_hessian(matrix):
+    L = len(matrix)
+    return np.matrix([[dZdkk(matrix,i,j) for i in range(4*L)]
+                      for j in range(4*L)])
+
