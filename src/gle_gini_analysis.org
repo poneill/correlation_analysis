@@ -1,0 +1,123 @@
+#+Title: Analysis of Gini Coefficients using Match-Mismatch Model and Gaussian Linear Ensembles
+
+#+Author: Patrick O'Neill
+
+#+Date: 17 October 2015
+
+* Introduction
+Previously we have seen that biological motifs exhibit higher Gini
+coefficients than motifs of equivalent dimension and information
+content sampled through evolutionary simulations which presume a
+match-mismatch binding model.  We wish to know whether this is due to
+genuine biological constraints or simply due to the form of the
+match-mismatch model, which requires identical binding interactions
+across all positions of the motif.  To answer this question, we will
+undertake the following plan:
+
+1. Validate stationary distribution computations
+2. Sample GLE motifs for each biological motif
+3. compare simulated GLE to biological Gini coefficients.
+
+
+* Validation of stationary distribution computations
+
+For a population in the rare mutation limit ($N_e\mu \ll 1$), we know
+that the probability of a motif $M$ is given by:
+
+$$P(M) = \frac{e^{\nu\log(f(M))}}{Z}.$$
+
+The partition function $Z$ runs over all motifs of given dimension and
+is clearly intractable.  If we wish to analyze distributions of this
+form, we must resort to other techniques.
+
+One possible strategy is Markov Chain Monte Carlo simulation, which is
+straightforward to implement but may take require long run-times in
+practice.  In this project we consider MCMC to be the gold standard
+for validating other algorithms, but a method of last resort in
+general.
+
+A potentially more efficient strategy is to approximate $Z$ by
+grouping the terms of the sum into a number of classes in such a way
+that the size of each class is known, and the within-class variance of
+the terms is tolerably small.  If this can be done, then each class
+can be estimated separately (either analytically or numerically) and
+the results combined to produce an estimate of $Z$.
+
+Overview of estimation strategies
+
+1. Naive random sampling: Sample motifs randomly
+2. Importance sampling: sample motifs using some PSSM-based sampling function
+3. Stratify by Hamming Distance
+   a. Then sample randomly
+   b. Or estimate analytically.
+
+The problem we face is that we know MCMC is likely to find solutions
+of higher fitness at a given Hamming distance than random mutation or
+even PSSM-based sampling.
+
+To see this phenomenon, we first import some utility functions:
+
+#+BEGIN_SRC ipython :session foo 
+from linear_gaussian_ensemble import *
+from linear_gaussian_ensemble_gini_analysis import mutate_motif_k_times
+from utils import transpose
+from matplotlib import pyplot as plt
+#%matplotlib inline
+#+END_SRC
+
+#+RESULTS:
+
+Now first construct a set of motifs by repeatedly mutating the optimum motif.
+
+#+BEGIN_SRC ipython :session foo
+L,n,sigma,G = 10,10,1,5*10**6
+matrix = sample_matrix(L,sigma)
+ringer = ringer_motif(matrix,n)
+random_rhos,random_fitnesses = transpose([(k,log_fitness(matrix,mutate_motif_k_times(ringer,k),G))
+	for k in range(L*n) for i in range(10)])
+
+#+END_SRC
+
+#+RESULTS:
+
+We compare these to a set of motifs sampled through MCMC.
+
+#+BEGIN_SRC ipython :session foo
+from linear_gaussian_ensemble_gini_analysis import sella_hirsch_mh
+from utils import motif_hamming_distance
+matrix,chain = sella_hirsch_mh(Ne=3,n=n,L=L,G=G, matrix=matrix,x0=ringer)
+mcmc_fitnesses = [log_fitness(matrix,m,G) for m in chain]
+mcmc_rhos = [motif_hamming_distance(ringer,m) for m in chain]
+#+END_SRC 
+
+#+RESULTS:
+
+And plot the results:
+
+#+BEGIN_SRC ipython :session foo  :results file
+from matplotlib import pyplot as plt
+%matplotlib inline
+plt.scatter(random_rhos,random_fitnesses,label="random mutation")
+plt.plot(mcmc_rhos,mcmc_fitnesses,label="MCMC")
+plt.xlabel("Mutational distance from ringer")
+plt.ylabel("log fitness")
+plt.savefig("rho_vs_fitness.png")
+'rho_vs_fitness.png'
+#+END_SRC 
+
+#+RESULTS:
+[[file:'rho_vs_fitness.png']]
+
+
+The first impression of this plot is that both MCMC and random
+sampling appear to exhibit a fairly clean exponential relationship
+between mutational distance and fitness.  
+
+However, as we can see, the two curves have different slopes: for a
+given value of $\rho$ MCMC finds higher-fitness solutions at a given
+distance from the max-fitness genotype.  If our sampling method cannot
+find such high-fitness motifs, then our estimates of quantities like
+the partition function and mean motif statistics will be biased.
+
+To cope with this problem, we propose replacing random sampling with
+an algorithm that should be biased towards high-fitness motifs.

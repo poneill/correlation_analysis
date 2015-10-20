@@ -1,0 +1,3 @@
+* Annealed approximation to Zb
+  <epsilon> = 0
+  Var(epsilon) = 3/4 * L * sigma**2

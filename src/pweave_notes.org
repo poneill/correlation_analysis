@@ -1,0 +1,14 @@
+
+* Problems
+
+** TODO cannot render pdf in one step
+
+** TODO python font-locking does not appear for code when file is opened
+   but does for new code...
+
+** TODO cannot send chunks to interpreter with C-c C-c
+
+** TODO python-mode not recognized as noweb-default-code-mode
+   must add header: -*- noweb-code-mode: python-mode; -*-
+
+** TODO header interferes with pweave!
