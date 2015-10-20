@@ -2,10 +2,10 @@ import numpy as np
 import random
 from simplex_sampling_experiment import make_kmers,h_np
 from estremo_on_a_napkin import sample_eps,boltzmann
-from estremo_on_a_napkin_discrete import sample_sites#mutate_sites,
-from estremo_on_a_napkin_potts import mutate,ln_mean,extract_sites
+from estremo_on_a_napkin_discrete import sample_sites,mutate_site
+from estremo_on_a_napkin_potts import mutate,ln_mean,extract_sites,mutate_bd
 from utils import random_site,inverse_cdf_sample,mean,motif_ic,h,transpose,rslice,pairs,log2,total_motif_mi,variance
-from utils import choose,choose2,mean,sd,subst,fac,log_fac,pl,concat
+from utils import choose,choose2,mean,sd,subst,fac,log_fac,pl,concat,mh,anneal
 from tqdm import tqdm,trange
 from math import exp,log,sqrt,ceil,pi
 from matplotlib import pyplot as plt
@@ -17,7 +17,7 @@ from sde import ou_relaxation_time_from_sample,is_stationary
 import itertools
 
 n = 16
-L = 5
+L = 10
 beta = 1
 K = 4**L
 G = 5*10**6
@@ -73,7 +73,21 @@ def make_ringer(code):
     sites = ["".join(concat([(b1,b2) for j in range(L/2)])) for i in range(n)]
     return bd,sites
 
-def make_ringer_viterbi(code):
+def mh_ringer(code):
+    f = lambda(x):fitness(code,x)
+    prop = lambda x:mutate(x,0.001,0.001)
+    x0 = sample_species()
+    chain = mh(f,prop,x0,use_log=True)
+
+def anneal_ringer(code):
+    f = lambda(x):-log(fitness(code,x))
+    mu = 0.1
+    prop = lambda (bd,sites):(mutate_bd(bd,mu),[mutate_site(sites[0],mu)]*n)
+    x0 = sample_species()
+    ring = anneal(f,prop,x0,return_trajectory =False,k=0.001)
+    return ring
+    
+def make_ringer_viterbi(code,L=L):
     """Make ringer using viterbi algorithm"""
     etas = []
     etas.append({x3:min(code[aa,x1,x3] for x1 in nucs for aa in aas) for x3 in nucs})
@@ -119,7 +133,7 @@ def test_maximum_binder(N=100,L=5):
     print "Passed"
     return True,True
     
-def make_ringer_viterbi2(code):
+def make_ringer_viterbi2(code,L=L):
     """Make ringer using viterbi algorithm"""
     def aa_mu(aa):
         return mean([code[aa,b1,b2] for b1,b2 in nuc_pairs])
@@ -285,6 +299,8 @@ def moran_process(code,mutation_rate,N=1000,turns=10000,
     if pop is None:
         pop = [(lambda spec:(spec,fitness(code,spec)))(init())
                for _ in trange(N)]
+    else:
+        pop = pop[:]
     hist = []
     for turn in xrange(turns):
         fits = [f for (s,f) in pop]

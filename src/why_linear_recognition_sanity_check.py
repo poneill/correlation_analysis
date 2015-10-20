@@ -84,6 +84,19 @@ def occ(sigma,L,G=5*10**6):
     #print "predicted occ: %1.3e actual occ: %1.3e" % (predicted_occ,actual_occ)
     #return actual_occ
 
+def occ_gaussian(sigma,L,G=5*10**6):
+    print sigma,L
+    if sigma == 0:
+        return 1/float(G+1)
+    eps = -np.random.normal(0,L*sigma,G)
+    ef = -L*sigma
+    log_Zb = log_Zb_from_eps_np(eps)
+    if log_Zb + ef < 700:
+        log_actual_occ = - log(1 + exp(log_Zb + ef))
+        return exp(log_actual_occ)
+    else:
+        return 0
+    
 def log_Zb_from_eps(eps):
     """compute log(sum(exp(-ep)) for ep in eps)"""
     min_ep = min(eps)
