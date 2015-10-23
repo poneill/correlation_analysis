@@ -1,6 +1,6 @@
 import numpy as np
 from utils import prod, score_seq, mutate_motif, random_motif, mh, argmin, argmax, prod, random_site, score_seq
-from utils import mean, variance
+from utils import mean, variance, choose2
 from math import exp,log
 import random
 from tqdm import *
@@ -53,8 +53,26 @@ def log_fitness(matrix,motif,G):
     Z = sum(fgs) + Zb
     return sum(log(fg/Z) for fg in fgs)
 
+def log_fitness_approx(matrix,motif,G):
+    eps = [score_seq(matrix,site) for site in motif]
+    fgs = [exp(-ep) for ep in eps]
+    Zf = sum(fgs)
+    Zb = Zb_from_matrix(matrix,G)
+    Z = Zf + Zb
+    zeroth_term = log(n+Zb)
+    first_term = (-1/(n+Zb)*sum(eps))
+    second_term = 1/2.0*1/(n+Zb)**2*((n + Zb - 1)*sum(ep**2 for ep in eps) -
+                                     sum(epi*epj for epi,epj in choose2(eps)))
+    # first_order = -sum(eps) - n*(log(n+Zb) + (-1/(n+Zb)*sum(eps)))
+    # second_order = -sum(eps) - n*(log(n+Zb) + (-1/(n+Zb)*sum(eps)) + 1/2.0*1/(n+Zb)**2*((n)))
+    return -sum(eps) - n*(zeroth_term + first_term + second_term)
 
-
+def Z_approx(matrix,n,Ne,G=5*10**6):
+    """use log fitness approximation to compute partition function"""
+    nu = Ne - 1
+    sigma_sq = sum(map(lambda xs:variance(xs,correct=False),matrix))
+    Zb = Zb_from_matrix(matrix,G)
+    
 def ringer_motif(matrix,n):
     best_site = "".join(["ACGT"[argmin(col)] for col in matrix])
     best_motif = [best_site]*n
