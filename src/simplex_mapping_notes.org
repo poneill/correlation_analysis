@@ -1,0 +1,1 @@
+measure2([x,1-x],sigma) = logit_measure([x,1-x],sqrt(2)*sigma)

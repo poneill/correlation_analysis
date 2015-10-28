@@ -36,7 +36,6 @@ def occ(sigma,L,G=5*10**6):
     #print "predicted occ: %1.3e actual occ: %1.3e" % (predicted_occ,actual_occ)
     return actual_occ
 
-
 def exact_occ(matrix,G):
     fg = exp(-sum(min(row) for row in matrix))
     Zb = G*exact_mean_Zb(matrix)
@@ -69,6 +68,12 @@ def predict_Zb2(G,L,sigma):
     var = G*(exp(site_sigma_sq)-1)*exp(site_sigma_sq)
     return expect,sqrt(var)
 
+def occ_final(G,L,sigma):
+    site_mu = 0
+    site_sigma_sq = 3/4.0 * L * sigma**2 # changed this from sigma
+    K = G*exp(-L*sigma)
+    return mean_lgn(site_mu,site_sigma_sq*K)
+    
 def compare_Zb2(G,L,sigma,trials=100):
     Zbs = [sample_Zb(G,L,sigma) for trial in trange(trials)]
     Zb_mu,Zb_sigma = predict_Zb2(G,L,sigma)
@@ -287,3 +292,39 @@ def Z_hessian(matrix):
     return np.matrix([[dZdkk(matrix,i,j) for i in range(4*L)]
                       for j in range(4*L)])
 
+def rlgn(mu,sigma):
+    return 1/(1+exp(-random.gauss(mu,sigma)))
+
+def mean_lgn(mu,sigma):
+    gamma = sqrt(1+pi*sigma**2/8)
+    return 1/(1+exp(-mu*gamma))
+
+def diffuse_array(xs,d=0.1):
+    n = len(xs)
+    ys = [0]*n
+    for i in range(n):
+        if i == 0:
+            ys[i] = (1-d)*xs[i] + d*xs[i+1]
+        elif i == n-1:
+            ys[i] = (1-d)*xs[i] + d*xs[i-1]
+        else:
+            ys[i] = (1-2*d)*xs[i] + d*(xs[i-1] + xs[i+1])
+    return ys
+
+def diffusion_experiment():
+    mus = np.linspace(-10,10,100)
+    sigmas = np.linspace(0.001,10,100)
+    obs = [[mean(rlgn(mu,sigma) for i in xrange(100)) for mu in mus] for sigma in sigmas]
+    xs = obs[0]
+    scaling_factor = 12
+    def make_pred(scaling_factor):
+        return [row for i,row in enumerate(iterate_list(lambda xs:diffuse_array(xs,d=0.5),xs,scaling_factor*len(sigmas))) if i % scaling_factor == 0]
+    def diff(pred):
+        return (sum((x-y)**2 for (ob_row,pred_row) in zip(obs,pred) for (x,y) in transpose([ob_row,pred_row])))
+
+    
+def iterate_list(f,x,n):
+    xs = [x]
+    for i in range(1,n+1):
+        xs.append(f(xs[-1]))
+    return xs
