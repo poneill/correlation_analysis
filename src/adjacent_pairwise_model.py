@@ -1,4 +1,4 @@
-from utils import pairs,argmin,random_site,prod, mean, score_seq
+from utils import pairs,argmin,random_site,prod, mean, score_seq, maybesave
 import random
 from itertools import product
 from math import exp,log
@@ -84,9 +84,18 @@ def max_occ(code,G=5*10**6):
 def occ_mat(trials=100):
     Ls = range(2,31)
     sigmas = np.linspace(0,20,100)
-    mat = [[mean(max_occ(sample_code(L,sigma)) for i in xrange(trials)) for L in Ls] for sigma in tqdm(sigmas)]
+    mat = [[mean(max_occ(sample_code(L,sigma)) for i in xrange(trials)) for L in Ls] for sigma in tqdm(sigmas)][::-1]
     return mat
 
+def plot_occ_mat(mat,Ls=range(2,31),sigmas=np.linspace(0,20,100),filename=None):
+    plt.imshow(mat,interpolation='nearest',extent=[2,31,0,20],aspect='auto')
+    plt.xticks(Ls)
+    #plt.yticks(["%1.2f" % x for x in sigmas[::-1]])
+    plt.xlabel("L")
+    plt.ylabel("$\sigma$")
+    plt.title("Occupancy for Optimal Binding Site in Adjacent Pairwise Model")
+    maybesave(filename)
+    
 def linearize(code):
     """return linear approximation of code"""
     L = len(code) + 1
