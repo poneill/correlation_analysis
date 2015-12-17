@@ -4,7 +4,7 @@ from utils import mutate_motif_p_exact, choose, subst, concat, find, mmap,binary
 from linear_gaussian_ensemble import *
 import sys
 sys.path.append("/home/pat/Dropbox/weighted_ensemble_motif_analysis")
-from maxent_motif_sampling import maxent_sample_motifs_with_ic
+from maxent_motif_sampling import maxent_motifs_with_ic
 from matplotlib import pyplot as plt
 import itertools
 from scipy import polyfit,poly1d
@@ -37,7 +37,7 @@ def sella_hirsch_mh(Ne=5,n=16,L=16,G=5*10**6,sigma=1,init="random",
         return motif_p
     chain = mh(log_f,prop,x0,use_log=True,iterations=iterations)
     return matrix,chain
-    
+
 def sella_hirsch_imh(Ne=5,n=16,L=16,G=5*10**6,sigma=1,init="random",
                                              matrix=None,x0=None,iterations=50000,p=None,lamb=1,return_ar=False):
     """Independent Metropolis Hastings with proposal density geometrically
@@ -87,6 +87,72 @@ def sella_hirsch_imh(Ne=5,n=16,L=16,G=5*10**6,sigma=1,init="random",
     chain = mh(log_f,prop_fanciful,x0,dprop=log_dprop_fanciful,use_log=True,iterations=iterations,verbose=False,
                return_ar=return_ar)
     return matrix,chain
+
+def sella_hirsch_imh_fixed_rho(Ne=5,n=16,L=16,G=5*10**6,sigma=1,init="random",
+                               matrix=None,x0=None,iterations=50000,
+                               p=None,lamb=1,return_ar=False,rho=0):
+    """Independent Metropolis Hastings with proposal density geometrically
+    distributed in # mutations from ringer"""
+    print "p:",p
+    if matrix is None:
+        matrix = sample_matrix(L,sigma)
+    ringer = ringer_motif(matrix,n)
+    if x0 is None:
+        x0 = mutate_motif_k_times(ringer,rho)
+    if p is None:
+        p = 1.0/(n*L)
+    nu = Ne - 1
+    N = n * L
+    ps = normalize([exp(-lamb*i) for i in range(N)])
+    def log_f(motif):
+        return nu * log_fitness(matrix,motif,G)
+    # def log_f(motif):
+    #     return log(random.random())
+    def prop(motif):
+        # determine number of mutations to perform
+        #k = discrete_exponential_sampler(N,lamb)
+        #motif_p = mutate_motif_p_exact(ringer,p) # probability of mutation per basepair
+        motif_p = mutate_motif_k_times(ringer,rho)
+        return motif_p
+    chain = mh(log_f,prop,x0,use_log=True,iterations=iterations,verbose=False,
+               return_ar=return_ar)
+    return matrix,chain
+
+def sella_hirsch_mh_recomb(Ne=5,n=16,L=16,G=5*10**6,sigma=1,init="random",
+                               matrix=None,x0=None,iterations=50000,p=None):
+    print "p:",p
+    if matrix is None:
+        matrix = sample_matrix(L,sigma)
+    if x0 is None:
+        if init == "random":
+            x0 = random_motif(L,n)
+        elif init == "ringer":
+            x0 = ringer_motif(matrix,n)
+        elif init == "anti_ringer":
+            x0 = anti_ringer_motif(matrix,n)
+        else:
+            x0 = init
+    if p is None:
+        p = 1.0/(n*L)
+    nu = Ne - 1
+    def log_f(motif):
+        return nu * log_fitness(matrix,motif,G)
+    def prop(motif):
+        if random.random() < 0.5:
+            motif_p = mutate_motif_p(motif,p) # probability of mutation per basepair
+            return motif_p
+        else:
+            motif_p = [site for site in motif]
+            i,j = random.choice((choose2(range(n))))
+            k = random.randrange(L)
+            site_ip = motif[i][:k/2] + motif[j][k/2:]
+            site_jp = motif[j][:k/2] + motif[i][k/2:]
+            motif_p[i] = site_ip
+            motif_p[j] = site_jp
+            return motif_p
+    chain = mh(log_f,prop,x0,use_log=True,iterations=iterations)
+    return matrix,chain
+
 
 def sample_log_odds(matrix,n,lamb=1):
     matrix_probs = [normalize([exp(-lamb*ep) for ep in row]) for row in matrix]
@@ -961,3 +1027,7 @@ def running_estimate(matrix_chain,Ne=5,T=motif_ic):
         foo.append(tm*w)
         accs.append(acc*(i/(i+1.0)) + tm*w/Z * 1/(i+1.0))
     return accs,foo
+
+def prob_motif_with_mismatch(n,L,k):
+    N = n*L
+    return choose(N,k)*(3/4.0)**k*(1/4.0)**(N-k)
