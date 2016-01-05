@@ -1,13 +1,16 @@
-from utils import choose, log_choose, inverse_cdf_sample, permute, secant_interval, show, normalize
+from utils import choose, log_choose, inverse_cdf_sample, permute, secant_interval, show, normalize, kde_regress
 from utils import maybesave, pl, bisect_interval, mean, log2, motif_ic
+from utils import bisect_interval_noisy, mmap, motif_gini, total_motif_mi
 from math import log, exp
 from scipy.optimize import minimize
 from scipy.stats import pearsonr
 import random
 import inspect
 import numpy as np
+from pwm_utils import site_sigma_from_matrix, psfm_from_motif, sigma_from_matrix
+from pwm_utils import pssm_from_motif
 from matplotlib import pyplot as plt
-
+from tqdm import *
 G = 5*10**6
 
 def prior(k,L):
@@ -75,8 +78,11 @@ def p_from_copies(k,sigma,Ne,L,copies):
     mu = mu_from(G,sigma,L,copies)
     return p(k,sigma,mu,Ne,L)
 
-def ps_from_copies(sigma,Ne,L,copies):
-    mu = mu_from(G,sigma,L,copies)
+def ps_from_copies(sigma,Ne,L,copies,approx=True):
+    if approx:
+        mu = approx_mu(G, sigma, L, copies)
+    else:
+        mu = mu_from(G,sigma,L,copies)
     return normalize([phat(k,sigma,mu,Ne,L) for k in range(L+1)])
 
 def sample_site(sigma,mu,Ne,L):
@@ -92,10 +98,69 @@ def sample_site_from_copies(sigma,Ne,L,copies,ps=None):
     k = inverse_cdf_sample(range(L+1), ps,normalized=False)
     return "".join(permute(["A" for _ in range(L-k)] + [random.choice("CGT") for _ in range(k)]))
     
-def sample_motif(sigma, Ne, L, copies, n):
-    ps = ps_from_copies(sigma, Ne, L, copies)
+def sample_motif(sigma, Ne, L, copies, n, ps=None):
+    if ps is None:
+        ps = ps_from_copies(sigma, Ne, L, copies)
     return [sample_site_from_copies(sigma,Ne,L,copies,ps=ps) for _ in range(n)]
 
+def sigma_Ne_contour_plot(filename=None):
+    sigmas = np.linspace(0,5,20)
+    Nes = np.linspace(1,20,20)
+    L = 10
+    n = 50
+    copies = 10*n
+    trials = 100
+    motifss = [[[(sample_motif(sigma, Ne, L, copies, n))
+               for i in range(trials)]
+          for sigma in sigmas] for Ne in tqdm(Nes)]
+    occ_M = [[expected_occupancy(sigma, Ne, L, copies)
+          for sigma in sigmas] for Ne in tqdm(Nes)]
+    print "ic_M"
+    ic_M = mmap(lambda ms:mean(map(motif_ic,ms)),motifss)
+    print "gini_M"
+    gini_M = mmap(lambda ms:mean(map(motif_gini,ms)),motifss)
+    print "mi_M"
+    mi_M = mmap(lambda ms:mean(map(total_motif_mi,ms)),tqdm(motifss))
+    plt.subplot(2,2,1)
+    plt.contourf(sigmas,Nes,occ_M,cmap='jet')
+    plt.colorbar()
+    plt.subplot(2,2,2)
+    plt.contourf(sigmas,Nes,ic_M,cmap='jet')
+    plt.colorbar()
+    plt.subplot(2,2,3)
+    plt.contourf(sigmas,Nes,gini_M,cmap='jet')
+    plt.colorbar()
+    plt.subplot(2,2,4)
+    plt.contourf(sigmas,Nes,mi_M,cmap='jet')
+    plt.colorbar()
+    maybesave(filename)
+    
+def spoof_motif(motif, num_motifs=10, trials=10, sigma=None,Ne_tol=10**-4):
+    n = len(motif)
+    L = len(motif[0])
+    copies = 10*n
+    if sigma is None:
+        sigma = sigma_from_matrix(pssm_from_motif(motif,pc=1))
+    print "sigma:", sigma
+    bio_ic = motif_ic(motif)
+    def f(Ne):
+        ps = ps_from_copies(sigma, Ne, L, copies)
+        motifs = [sample_motif(sigma, Ne, L, copies, n,ps=ps)
+                  for i in range(trials)]
+        return mean(map(motif_ic,motifs)) - bio_ic
+    lb = 1
+    ub = 2
+    while f(ub) < 0:
+        ub *= 2
+    ub *= 2 # once more for good measure
+    x0 = (lb + ub)/2.0
+    print "Ne guess:", x0
+    Nes = [bisect_interval_noisy(f,x0=x0,tolerance=Ne_tol,lb=1) for i in range(3)]
+    Ne = mean(Nes)
+    print "Nes:",Nes,Ne
+    return [sample_motif(sigma, Ne, L, copies, n) for _ in range(num_motifs)]
+    
+    
 def sample_ic(sigma,mu,Ne,L,n,trials=1000):
     return mean(motif_ic(sample_motif(sigma,mu,Ne,L,n)) for i in range(trials))
 
@@ -110,6 +175,7 @@ def expected_mi_from_undersampling(sigma,Ne,L,copies,n):
     Hx = -(q*log2(q) + p*log2(p/3))
     Hxy = -(q**2*log2(q**2) + 2*p*q*log2(p*q/3) + p**2*log2(p**2/9))
     return 
+
 def expected_occupancy(sigma,Ne,L,copies):
     ps = ps_from_copies(sigma,Ne,L,copies)
     mu = mu_from(G,sigma,L,copies)

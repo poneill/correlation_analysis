@@ -1,21 +1,24 @@
 from utils import pairs,argmin,random_site,prod, mean, score_seq, maybesave
+from utils import scatter, normalize, inverse_cdf_sample, transpose
 import random
 from itertools import product
 from math import exp,log
 import numpy as np
 from tqdm import *
 from scipy.stats import pearsonr
+from collections import Counter
+from matplotlib import pyplot as plt
 
-alphabet = "ACGT"
+abet = "ACGT"
 
 def kmers(L):
-    return product(*[alphabet for i in range(L)])
+    return ("".join(kmer) for kmer in product(*[abet for i in range(L)]))
     
 def sample_code(L,sigma):
-    return [{(n1,n2):random.gauss(0,sigma) for n1 in alphabet for n2 in alphabet}
+    return [{(n1,n2):random.gauss(0,sigma) for n1 in abet for n2 in abet}
             for i in xrange(L-1)]
 
-def best_binder(code):
+def best_binder_dep(code):
     L = len(code) + 1
     i = argmin([score(code,site) for site in kmers(L)])
     return list(kmers(L))[i]
@@ -35,6 +38,20 @@ def compute_Zb(code):
           for interaction in code]
     return np.array([1,1,1,1]).dot(reduce(lambda x,y:x.dot(y),Ws)).dot(np.array([1,1,1,1]))[0,0]
 
+def partial_Zb(code, partial_site):
+    partial_site = partial_site + "X"*(len(code)+1-len(partial_site))
+    def match(b,s):
+        return b == s or s == 'X'
+    def element(b1,b2,s1,s2):
+        if match(b1,s1) and match(b2,s2):
+            return exp(interaction[b1,b2])
+        else:
+            return 0
+    Ws = [np.matrix([[element(b1,b2,s1,s2) for b2 in "ACGT"]
+                     for b1 in "ACGT"])
+          for interaction,(s1,s2) in zip(code,pairs(partial_site))]
+    return np.array([1,1,1,1]).dot(reduce(lambda x,y:x.dot(y),Ws)).dot(np.array([1,1,1,1]))[0,0]
+    
 def test_compute_Zb(code):
     L = len(code) + 1
     Zb_ref = sum(exp(score(code,site)) for site in kmers(L))
@@ -49,10 +66,10 @@ def best_binder(code):
         rel_len = i + 1 # at this point we consider paths of length i + 1
         rel_paths = filter(lambda path:len(path) == rel_len,paths.keys())
         for b2 in "ACGT":
-            best_path = min(rel_paths,key=lambda path:paths[path] + weight[path[-1],b2])
+            best_path = max(rel_paths,key=lambda path:paths[path] + weight[path[-1],b2])
             paths[best_path + b2] = paths[best_path] + weight[best_path[-1],b2]
     final_paths = filter(lambda path:len(path) == L,paths.keys())
-    return min(final_paths,key=lambda path:paths[path])
+    return max(final_paths,key=lambda path:paths[path])
 
 def predict_best_binder():
     """explore expected energy of best binder"""
@@ -70,7 +87,7 @@ def predict_best_binder():
 def test_best_binder(code):
     L = len(code) + 1
     pred_best = best_binder(code)
-    obs_best = "".join(min(kmers(L),key = lambda site:score(code,site)))
+    obs_best = min(kmers(L),key = lambda site:score(code,site))
     return pred_best == obs_best
     
 def max_occ(code,G=5*10**6):
@@ -141,3 +158,55 @@ def test_linearize_explict(L,sigma):
     plt.scatter(pred,obs)
     plt.plot([-2,2],[-2,2])
     print pearsonr(pred,obs)
+
+def sample_site(code):
+    L = len(code) + 1
+    partial_site = ""
+    while len(partial_site) < L:
+        #print "partial_site:",partial_site
+        qs = normalize([partial_Zb(code,partial_site+b) for b in "ACGT"])
+        #print "qs:",qs
+        b = inverse_cdf_sample("ACGT",qs)
+        #print "b:",b
+        partial_site = partial_site + b
+        #print "partial_site (end):",partial_site
+    return partial_site
+
+def prob_site(site,code):
+    return exp(score(code, site))/compute_Zb(code)
+
+def test_sample_site(trials=10000):
+    L, sigma = 3, 1
+    code = sample_code(L,sigma)
+    phats = [exp(score(code,site)) for site in kmers(L)]
+    Z = sum(phats)
+    ps = [phat/Z for phat in phats]
+    sites = [sample_site(code) for _ in trange(trials)]
+    counts = Counter(sites)
+    p_obs = [counts[kmer]/float(trials) for kmer in kmers(L)]
+    scatter(ps,p_obs)
+
+def code_from_motif(motif):
+    cols = transpose(motif)
+    N = float(len(motif))
+    freqs = [{(b1,b2):((zip(col1,col2).count((b1,b2))+1)/(N+16))
+           for b1 in "ACGT" for b2 in "ACGT"} for col1,col2 in pairs(cols)]
+    ws = [{k:log(p) for k,p in freqs[0].items()}]
+    for freq in freqs[1:]:
+        ws.append({(b1,b2):log(freq[b1,b2]/sum(freq[b1,b2p] for b2p in "ACGT"))
+                   for b1 in "ACGT" for b2 in "ACGT"})
+    return ws
+
+def test_code_from_motif():
+    L = 3
+    code = sample_code(L,sigma=1)
+    motif = [sample_site(code) for i in trange(10000)]
+    rec_code = code_from_motif(motif)
+    rec_motif = [sample_site(rec_code) for i in trange(10000)]
+    ps = [motif.count(kmer) for kmer in kmers(L)]
+    rec_ps = [rec_motif.count(kmer) for kmer in kmers(L)]
+    scatter(ps,rec_ps)
+    
+def ps_from_code(code):
+    L = len(code) + 1
+    return normalize([exp(score(code,kmer)) for kmer in kmers(L)])

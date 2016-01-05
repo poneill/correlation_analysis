@@ -14,6 +14,8 @@ import numpy as np
 from scipy.stats import pearsonr, spearmanr
 import time
 import numpy as np
+from chem_pot_model_on_off import spoof_motif
+from exact_evo_sim_sampling import spoof_motif_cftp
 
 def coverage_region(xs,alpha=0.95):
     n = len(xs)
@@ -92,11 +94,14 @@ def extract_motif_object_from_tfdf():
                 continue
             tf_name = genome + "_" + tf
             sites = extract_tfdf_sites(genome,tf)
-            if len(sites) >= 10:
+            if len(sites) >= 10 and motif_ic(sites) > 5:
                 setattr(obj,tf_name,sites)
                 obj.tfs.append(tf_name)
     return obj
-    
+
+tfdf = extract_motif_object_from_tfdf()
+bio_motifs = [getattr(tfdf,tf) for tf in tfdf.tfs]
+
 def tfdf_experiment(replicates=1000,delta_ic=0.1,tolerance=10**-5):
     genomes = set(tfdf['genome_accession'])
     results_dict = defaultdict(lambda:defaultdict(dict))
@@ -140,7 +145,84 @@ def tfdf_experiment(replicates=1000,delta_ic=0.1,tolerance=10**-5):
                     motif_stat = eval(motif_statname)
                     results_dict[tf_name][spoof_name][motif_statname] = map(motif_stat,spoofs)
     return results_dict
-            
+
+def evo_sim_experiment(filename=None):
+    """compare bio motifs to on-off evosims"""
+    tfdf = extract_motif_object_from_tfdf()
+    bio_motifs = [getattr(tfdf,tf) for tf in tfdf.tfs]
+    evosims = [spoof_motif(motif,num_motifs=100,Ne_tol=10**-4)
+               for motif in tqdm(bio_motifs)]
+    evo_ics = [mean(map(motif_ic,sm)) for sm in tqdm(evosims)]
+    evo_ginis = [mean(map(motif_gini,sm)) for sm in tqdm(evosims)]
+    evo_mis = [mean(map(total_motif_mi,sm)) for sm in tqdm(evosims)]
+    plt.subplot(1,3,1)
+    scatter(map(motif_ic,bio_motifs),evo_ics)
+    plt.title("Motif IC (bits)")
+    plt.xlabel("Biological Value")
+    plt.ylabel("Simulated Value")
+    plt.subplot(1,3,2)
+    scatter(map(motif_gini,bio_motifs),
+            evo_ginis)
+    plt.title("Motif Gini Coefficient")
+    plt.xlabel("Biological Value")
+    plt.ylabel("Simulated Value")
+    plt.subplot(1,3,3)
+    scatter(map(total_motif_mi,bio_motifs),
+            evo_mis)
+    plt.xlabel("Biological Value")
+    plt.ylabel("Simulated Value")
+    plt.title("Pairwise Motif MI (bits)")
+    plt.loglog()
+    plt.tight_layout()
+    plt.savefig(filename)
+    return evosims
+
+def plot_results_dict_gini_vs_ic(results_dict,filename=None):
+    for i,k in enumerate(results_dict):
+        g1,g2,tf = k.split("_")
+        genome = g1 + "_" + g2
+        bio_motif = extract_tfdf_sites(genome,tf)
+        bio_ic = motif_ic(bio_motif)
+        bio_gini = motif_gini(bio_motif)
+        d = results_dict[k]
+        plt.scatter(bio_ic,bio_gini,color='b',label="Bio"*(i==0))
+        plt.scatter(mean(d['maxent']['motif_ic']),mean(d['maxent']['motif_gini']),color='g',label='ME'*(i==0))
+        plt.scatter(mean(d['uniform']['motif_ic']),mean(d['uniform']['motif_gini']),color='r',label="TURS"*(i==0))
+    plt.xlabel("IC (bits)")
+    plt.ylabel("Gini Coefficient")
+    plt.legend()
+    maybesave(filename)
+
+def plot_results_dict_gini_qq(results_dict,filename=None):
+    bios = []
+    maxents = []
+    uniforms = []
+    for i,k in enumerate(results_dict):
+        g1,g2,tf = k.split("_")
+        genome = g1 + "_" + g2
+        bio_motif = extract_tfdf_sites(genome,tf)
+        bio_ic = motif_ic(bio_motif)
+        bio_gini = motif_gini(bio_motif)
+        d = results_dict[k]
+        bios.append(bio_gini)
+        maxents.append(mean(d['maxent']['motif_gini']))
+        uniforms.append(mean(d['uniform']['motif_gini']))
+    plt.scatter(bios,maxents,label='ME')
+    plt.scatter(bios,uniforms,label='TURS',color='g')
+    minval = min(bios+maxents+uniforms)
+    maxval = max(bios+maxents+uniforms)
+    plt.plot([minval,maxval],[minval,maxval],linestyle='--')
+    plt.xlabel("Observed Gini Coefficient")
+    plt.ylabel("Mean Sampled Gini Coefficient")
+    plt.legend(loc='upper left')
+    print "bio vs maxent:",pearsonr(bios,maxents)
+    print "bio vs uniform:",pearsonr(bios,uniforms)
+    maybesave(filename)
+
+
+
+
+    
 def interpret_biological_experiment(results_dict):
     spoof_names = sorted([k for k in results_dict.values()[0] if not k == 'bio'])
     stat_names = sorted([k for k in results_dict.values()[0]['bio']])
@@ -478,3 +560,51 @@ def kmeans(xs,k=2):
         
 def motif_dimensions(motif):
     return len(motif), len(motif[0])
+
+def gle_evo_sim_spoofs(filename=None):
+    trials_per_motif = 1
+    bio_motifs = [getattr(tfdf,tf) for tf in tfdf.tfs]
+    spoofs = [[spoof_motif_cftp(motif)
+               for i in range(trials_per_motif)]
+              for motif in tqdm(bio_motifs,desc='bio motifs')]
+    
+    plt.subplot(1,3,1)
+    plt.title("Motif IC (bits)")
+    bio_ics = map(motif_ic,bio_motifs)
+    sim_ics = [mean(map(motif_ic,motifs)) for spoof in spoofs for motifs in spoof]
+    scatter(bio_ics,sim_ics,
+            color='black')
+    plt.xlim(*find_limits(bio_ics, sim_ics,1))
+    plt.ylim(*find_limits(bio_ics, sim_ics,1))
+    plt.ylabel("Simulated")
+    plt.subplot(1,3,2)
+    plt.xlabel("Observed")
+    plt.title("Gini Coefficient")
+    bio_ginis = map(motif_gini,bio_motifs)
+    sim_ginis = [mean(map(motif_gini,motifs))
+                 for spoof in spoofs for motifs in spoof]
+    scatter(bio_ginis,sim_ginis,
+            color='black')
+    plt.xlim(*find_limits(bio_ginis, sim_ginis,0.1))
+    plt.ylim(*find_limits(bio_ginis, sim_ginis,0.1))
+    plt.subplot(1,3,3)
+    plt.title("Log Total Pairwise MI (bits)")
+    draft = False
+    end = 10 if draft else 108
+    log_bio_mis = map(log,map(total_motif_mi,bio_motifs[:end]))
+    log_sim_mis = map(log,[mean(map(total_motif_mi,motifs))
+               for spoof in tqdm(spoofs[:end]) for
+               motifs in spoof])
+    scatter(log_bio_mis,log_sim_mis,
+            color='black')
+    plt.xlim(*find_limits(log_bio_mis, log_sim_mis,1))
+    plt.ylim(*find_limits(log_bio_mis, log_sim_mis,1))
+    # #ax.set_bg_color('none')
+    # ax.set_xlabel("Biological")
+    # ax.set_ylabel("Simulated")
+    plt.tight_layout()
+    maybesave(filename)
+    
+def find_limits(xs,ys,pad=1):
+    zs = xs + ys
+    return min(zs) - pad, max(xs) + pad

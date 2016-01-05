@@ -126,7 +126,15 @@ def uniform_motifs_with_ic_rw_harmonic(n, L, desired_ic, num_motifs, epsilon=0.1
     beta = find_beta_for_mean_motif_ic(n,L,desired_ic_for_beta)
     return [uniform_motif_with_ic_rw(n,L, desired_ic,beta=beta,epsilon=epsilon,iterations="harmonic")[-1]
             for _ in range(num_motifs)]
-    
+
+def uniform_motifs_with_ic_rw(n, L, desired_ic, num_motifs, epsilon=0.1,num_chains=8):
+    correction_per_col = 3/(2*log(2)*n)
+    desired_ic_for_beta = desired_ic + L * correction_per_col
+    beta = find_beta_for_mean_motif_ic(n,L,desired_ic_for_beta)
+    return [random.choice(uniform_motif_with_ic_rw(n,L, desired_ic,
+                                                   beta=beta,epsilon=epsilon,num_chains=num_chains))[-1]
+            for _ in range(num_motifs)]
+
 def uniform_motif_with_ic_rw(n,L,desired_ic,epsilon=0.1,p=None,iterations=None,num_chains=8,x0=None,beta=None):
     if p is None:
         p = 2.0/(n*L)

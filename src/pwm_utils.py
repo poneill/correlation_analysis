@@ -1,6 +1,6 @@
 """utilities for pwm matrices"""
 
-from utils import normalize, h, inverse_cdf_sample, transpose, make_pssm, prod, argmin, mean
+from utils import normalize, h, inverse_cdf_sample, transpose, make_pssm, prod, argmin, mean, sd
 import random
 from math import exp, log, sqrt, pi
 
@@ -18,11 +18,15 @@ def psfm_from_matrix(matrix):
     """calculate IC assuming that matrix has log-odds weights"""
     return [normalize([exp(-ep) for ep in col]) for col in matrix]
 
-def psfm_from_motif(motif,pc=0):
+def psfm_from_motif(motif,pc=1):
     n = float(len(motif))
     cols = transpose(motif)
     return [[(col.count(b) + pc)/(n+4*pc) for b in "ACGT"] for col in cols]
-    
+
+def pssm_from_motif(motif, pc=1):
+    psfm = psfm_from_motif(motif, pc)
+    return [[log(f/0.25,2) for f in row] for row in psfm]
+
 def ic_from_matrix(matrix):
     psfm = psfm_from_matrix(matrix)
     return sum(2 - h(col) for col in psfm)
@@ -64,3 +68,20 @@ def ringer_motif(matrix,n):
 def predict_ic_from_mean_ep(matrix,ep):
     """given ep, find <IC> of motifs with that ep"""
     pass
+
+def approx_mu(matrix, copies, G=5*10**6):
+    Zb = Zb_from_matrix(matrix, G)
+    return log(copies) - log(Zb)
+
+def Zb_matrix_lamb(matrix, lamb):
+    return prod([sum(exp(-lamb*ep) for ep in row) for row in matrix])
+
+def dZb_matrix_lamb(matrix,lamb):
+    print lamb
+    return sum([(sum(-ep*exp(-lamb*ep) for ep in row)/
+                 sum(exp(-lamb*ep) for ep in row))
+                for row in matrix])
+
+def minimize_Zq(matrix):
+    f = lambda lamb:dZb_matrix_lamb(matrix,lamb)
+    return secant_interval(f,-10,10)

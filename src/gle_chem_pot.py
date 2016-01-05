@@ -15,7 +15,7 @@ from tqdm import *
 from matplotlib import pyplot as plt
 import random
 from motifs import Escherichia_coli
-from parse_tfbs_data import tfdf
+#from parse_tfbs_data import tfdf
 import seaborn as sns
 # lower mu means less protein.
 
