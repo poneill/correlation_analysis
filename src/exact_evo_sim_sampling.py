@@ -251,8 +251,8 @@ def sample_motif_ar(matrix, mu, Ne, n, modulus=10**6):
     
 def sample_motif_ar_param_study():
     """Examine dependence of IC on sigma, Ne"""
-    sigmas = np.linspace(0.5,5,5)
-    Nes = np.linspace(1,5,5)
+    sigmas = np.linspace(0.5,3,5)
+    Nes = np.linspace(1,3,5)
     trials = 3
     n = 20
     L = 10
@@ -260,19 +260,19 @@ def sample_motif_ar_param_study():
         matrix = sample_matrix(L, sigma)
         mu = approx_mu(matrix, 10*n)
         return motif_ic(sample_motif_ar(matrix, mu, Ne, n, modulus=10**5))
-    ics = [[show(mean(f(sigma, Ne) for _ in range(trials)))
-            for sigma in sigmas] for Ne in Nes]
+    ics = [[(mean(f(sigma, Ne) for _ in range(trials)))
+            for sigma in sigmas] for Ne in tqdm(Nes)]
     plt.contourf(sigmas, Nes,ics)
     plt.colorbar()
-    bio_motifs = [getattr(Escherichia_coli,tf) for tf in Escherichia_coli.tfs]
-    bio_sigmas = [sigma_from_matrix(pssm_from_motif(motif,pc=1))
-                  for motif in bio_motifs]
-    bio_ics = [motif_ic(motif) for motif in bio_motifs]
-    griddata((sigmas,Nes),ics)
-    interp = interp2d(sigmas,Nes,ics)
-    bio_Nes = [bisect_interval(lambda Ne:interp(show(bio_sigma),Ne)-bio_ic,0,20)
-               for bio_sigma, bio_ic in zip(bio_sigmas,bio_ics)]
-    plt.scatter(sigm)
+    # bio_motifs = [getattr(Escherichia_coli,tf) for tf in Escherichia_coli.tfs]
+    # bio_sigmas = [sigma_from_matrix(pssm_from_motif(motif,pc=1))
+    #               for motif in bio_motifs]
+    # bio_ics = [motif_ic(motif) for motif in bio_motifs]
+    # griddata((sigmas,Nes),ics)
+    # interp = interp2d(sigmas,Nes,ics)
+    # bio_Nes = [bisect_interval(lambda Ne:interp(show(bio_sigma),Ne)-bio_ic,0,20)
+    #            for bio_sigma, bio_ic in zip(bio_sigmas,bio_ics)]
+    # plt.scatter(sigm)
     
     
 def sample_site_mh(matrix, mu, Ne, ringer_site, iterations=1000):
@@ -291,7 +291,9 @@ def sample_motif_with_ic(n,L):
     motifs = [[sample_motif_mh(matrix, mu, Ne, n)
                for t in range(trials)] for Ne in tqdm(Nes)]
 
-def sample_motif_mh(matrix, mu, Ne, n, iterations=1000):
+def sample_motif_mh(matrix, mu, Ne, n, iterations=None):
+    L = len(matrix)
+    iterations = 20*L
     ringer_site = "".join(["ACGT"[argmin(col)] for col in matrix])
     return [sample_site_mh(matrix, mu, Ne, ringer_site, iterations=iterations)[-1]
             for i in xrange(n)]
@@ -432,11 +434,12 @@ def sample_site_cftp(matrix, mu, Ne):
 def pos(site):
     return sum(4**i * "ACGT".index(site[i]) for i,b in enumerate(site))
 
-def sample_motif_cftp(matrix, mu, Ne, n):
+def sample_motif_cftp(matrix, mu, Ne, n,verbose=False):
+    iterator = trange(n,desc="sampling cftp motif") if verbose else xrange(n)
     return [sample_site_cftp(matrix, mu, Ne)
-            for i in trange(n,desc="sampling cftp motif")]
+            for i in iterator]
     
-def spoof_motif_cftp(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-4):
+def spoof_motif_cftp(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-2):
     n = len(motif)
     L = len(motif[0])
     copies = 10*n
@@ -521,7 +524,10 @@ def log_regress_spec(f,xs, tol=0.1):
         yxp = f(exp(log_xp))
         ys.append(yxp)
         honest_guesses.append(honest_guess)
-        print "honest_guess:",honest_guess,"log_xp:",log_xp,"y:",yxp
+        diff = (abs(exp(honest_guesses[-1]) - exp(honest_guesses[-2]))
+                if len(honest_guesses) > 1 else None)
+        print "honest_guess:",exp(honest_guess),"xp:",exp(log_xp),\
+            "y:",yxp, "diff:",diff
     #lin = poly1d(polyfit(log_xs,ys,1))
     m, b = (polyfit(log_xs,ys,1))
     log_xp = -b/m#secant_interval(lin,min(log_xs),max(log_xs))
@@ -529,3 +535,35 @@ def log_regress_spec(f,xs, tol=0.1):
     return exp(log_xp)
 
     
+def sample_motif_cftp_param_study():
+    """Examine dependence of IC on sigma, Ne"""
+    grid_points = 10
+    sigmas = np.linspace(0.5,10,grid_points)
+    Nes = np.linspace(1,10,grid_points)
+    trials = 3
+    n = 20
+    L = 10
+    def f(sigma, Ne):
+        matrix = sample_matrix(L, sigma)
+        mu = approx_mu(matrix, 10*n)
+        return motif_ic(sample_motif_cftp(matrix, mu, Ne, n))
+    ics = [[(mean(f(sigma, Ne) for _ in range(trials)))
+            for sigma in sigmas] for Ne in tqdm(Nes,desc="ic grid")]
+    plt.contourf(sigmas, Nes,ics)
+    plt.colorbar()
+    #bio_motifs = [getattr(Escherichia_coli,tf) for tf in Escherichia_coli.tfs]
+    bio_sigmas = [sigma_from_matrix(pssm_from_motif(motif,pc=1))
+                  for motif in bio_motifs]
+    bio_ics = [motif_ic(motif) for motif in bio_motifs]
+    #griddata((sigmas,Nes),ics)
+    interp = interp2d(sigmas,Nes,ics)
+    bio_Nes = [bisect_interval(lambda Ne:interp(show(bio_sigma),Ne)-bio_ic,0,20)
+               for bio_sigma, bio_ic in zip(bio_sigmas,bio_ics)]
+    plt.scatter(sigm)
+
+def mh_cftp_comparison():
+    matrix = sample_matrix(10,1)
+    mu = -10
+    Ne = 5
+    mh_ics = [motif_ic(sample_motif_mh(matrix, mu, Ne, 50)) for i in trange(100)]
+    cftp_ics = [motif_ic(sample_motif_cftp(matrix, mu, Ne, 50)) for i in trange(100)]
