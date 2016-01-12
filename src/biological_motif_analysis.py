@@ -3,7 +3,7 @@ from maxent_motif_sampling import maxent_motifs_with_ic, find_beta_for_mean_moti
 from uniform_motif_sampling import uniform_motifs_accept_reject as uniform_motifs_with_ic
 from utils import sample_until,maybesave,concat,motif_ic,motif_gini,total_motif_mi,choose2, choose
 from utils import transpose,pl,bs,random_motif,inverse_cdf_sample,mmap,mean,mode
-from utils import mi_permute,dna_mi,log2
+from utils import mi_permute,dna_mi,log2, transpose
 from matplotlib import pyplot as plt
 from collections import defaultdict
 import sys
@@ -17,6 +17,7 @@ import time
 import numpy as np
 from chem_pot_model_on_off import spoof_motif
 from exact_evo_sim_sampling import spoof_motif_cftp
+from motif_profile import find_pattern
 
 def coverage_region(xs,alpha=0.95):
     n = len(xs)
@@ -562,13 +563,31 @@ def kmeans(xs,k=2):
 def motif_dimensions(motif):
     return len(motif), len(motif[0])
 
-def gle_evo_sim_spoofs(filename=None):
-    trials_per_motif = 1
+def make_gle_evo_sim_spoofs(trials_per_motif = 3):
+    start_time = time.time()
+    spoofs = []
+    failures = 0
+    for it, motif in enumerate(tqdm(bio_motifs, desc='bio_motifs')):
+        bio_ic = motif_ic(motif)
+        these_spoofs = [spoof_motif_cftp(motif,num_motifs=10, Ne_tol=10**-2)
+                        for i in range(trials_per_motif)]
+        spoofs.append(these_spoofs)
+        spoof_ics = map(motif_ic, concat(these_spoofs))
+        lb, ub = mean_ci(spoof_ics)
+        out_of_bounds = (not (lb <= bio_ic <= ub))
+        failures += out_of_bounds
+        fail_perc = failures/float(it+1)
+        print it,"bio_ic:", bio_ic, "spoof_ci: (%s,%s)" % (lb, ub), "*" * out_of_bounds,"failures:","%1.2f" % fail_perc
+    stop_time = time.time()
+    print "total time:", stop_time  - start_time
+    return spoofs
+    
+def interpret_gle_evo_sim_spoofs(spoofs,filename=None):
     #bio_motifs = [getattr(tfdf,tf) for tf in tfdf.tfs]
-    spoofs = [[spoof_motif_cftp(motif,Ne_tol=10**-2)
-               for i in range(trials_per_motif)]
-              for motif in tqdm(bio_motifs,desc='bio motifs')]
-
+    # spoofs = [[spoof_motif_cftp(motif,Ne_tol=10**-2)
+    #            for i in range(trials_per_motif)]
+    #           for motif in tqdm(bio_motifs,desc='bio motifs')]
+    trials_per_motif = len(spoofs[0])
     bio_ics = [motif_ic(motif) for motif in bio_motifs
                for _ in range(trials_per_motif)]
     sim_ics = [mean(map(motif_ic,motifs))
@@ -587,42 +606,48 @@ def gle_evo_sim_spoofs(filename=None):
                for (l, bio_log_mi) in zip(lens, bio_log_mis)]
     sim_mis = [exp(sim_log_mi)/choose(l,2)
                for (l, sim_log_mi) in zip(lens, sim_log_mis)]
+    bio_patterns = [find_pattern(motif)[0] for motif in bio_motifs]
+    pattern_colors = {'direct-repeat':'g','inverted-repeat':'b','single-box':'r'}
+    colors = [pattern_colors[p] for p in bio_patterns]
     plt.subplot(1,3,1)
     plt.title("Motif IC (bits)") 
-    scatter(bio_ics,sim_ics,
-            color='black')
+    scatter(bio_ics,sim_ics,color=colors,
+            line_color='black')
     ic_f = poly1d(polyfit(bio_ics, sim_ics,1))
-    plt.plot(*pl(ic_f,[min(bio_ics),max(bio_ics)]),linestyle='--',color='b')
-    plt.xlim(*find_limits(bio_ics, sim_ics,1))
-    plt.ylim(*find_limits(bio_ics, sim_ics,1))
+    #plt.plot(*pl(ic_f,[min(bio_ics),max(bio_ics)]),linestyle='--',color='b')
+    plt.xlim(*find_limits(bio_ics, sim_ics))
+    plt.ylim(*find_limits(bio_ics, sim_ics))
     plt.ylabel("Simulated")
     plt.subplot(1,3,2)
     plt.xlabel("Observed")
     plt.title("Gini Coefficient")
-    scatter(bio_ginis,sim_ginis,
-            color='black')
+    scatter(bio_ginis,sim_ginis,color=colors,
+            line_color='black')
     gini_f = poly1d(polyfit(bio_ginis, sim_ginis,1))
-    plt.plot(*pl(gini_f,[min(bio_ginis),max(bio_ginis)]),
-             linestyle='--',color='b')
-    plt.xlim(*find_limits(bio_ginis, sim_ginis,0.1))
-    plt.ylim(*find_limits(bio_ginis, sim_ginis,0.1))
+    #plt.plot(*pl(gini_f,[min(bio_ginis),max(bio_ginis)]),
+     #        linestyle='--',color='b')
+    plt.xlim(*find_limits(bio_ginis, sim_ginis))
+    plt.ylim(*find_limits(bio_ginis, sim_ginis))
     plt.subplot(1,3,3)
-    plt.title("Log Total Pairwise MI (bits)")
+    plt.title("Pairwise MI per pair (bits)")
     draft = False
     end = 10 if draft else 108
-    scatter(bio_log_mis,sim_log_mis,
-            color='black')
-    mi_f = poly1d(polyfit(bio_log_mis, sim_log_mis,1))
-    plt.plot(*pl(mi_f,[min(bio_log_mis),max(bio_log_mis)]),
-             linestyle='--',color='b')
-    plt.xlim(*find_limits(bio_log_mis, sim_log_mis,1))
-    plt.ylim(*find_limits(bio_log_mis, sim_log_mis,1))
+    scatter(bio_mis,sim_mis,color=colors,
+            line_color='black')
+    mi_f = poly1d(polyfit(bio_mis, sim_mis,1))
+    # plt.plot(*pl(mi_f,[min(bio_mis),max(bio_mis)]),
+    #          linestyle='--',color='b')
+    plt.xlim(*find_limits(bio_mis, sim_mis))
+    plt.ylim(*find_limits(bio_mis, sim_mis))
+    plt.legend()
     # #ax.set_bg_color('none')
     # ax.set_xlabel("Biological")
     # ax.set_ylabel("Simulated")
     plt.tight_layout()
     maybesave(filename)
     
-def find_limits(xs,ys,pad=1):
+def find_limits(xs,ys,pad=None):
     zs = xs + ys
-    return min(zs) - pad, max(xs) + pad
+    if pad is None:
+        pad = (max(zs) - min(zs)) * 0.05
+    return min(zs) - pad, max(zs) + pad
