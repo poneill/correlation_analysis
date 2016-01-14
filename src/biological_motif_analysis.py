@@ -1,9 +1,9 @@
 from motifs import *
-from maxent_motif_sampling import maxent_motifs_with_ic, find_beta_for_mean_motif_ic
+from maxent_motif_sampling import maxent_motifs_with_ic, find_beta_for_mean_motif_ic, spoof_motifs_maxent
 from uniform_motif_sampling import uniform_motifs_accept_reject as uniform_motifs_with_ic
 from utils import sample_until,maybesave,concat,motif_ic,motif_gini,total_motif_mi,choose2, choose
 from utils import transpose,pl,bs,random_motif,inverse_cdf_sample,mmap,mean,mode
-from utils import mi_permute,dna_mi,log2, transpose
+from utils import mi_permute,dna_mi,log2, transpose, log_normalize, sample
 from matplotlib import pyplot as plt
 from collections import defaultdict
 import sys
@@ -15,7 +15,7 @@ import numpy as np
 from scipy.stats import pearsonr, spearmanr
 import time
 import numpy as np
-from chem_pot_model_on_off import spoof_motif
+from chem_pot_model_on_off import spoof_motif as spoof_motif_oo
 from exact_evo_sim_sampling import spoof_motif_cftp
 from motif_profile import find_pattern
 
@@ -563,6 +563,25 @@ def kmeans(xs,k=2):
 def motif_dimensions(motif):
     return len(motif), len(motif[0])
 
+def make_oo_evo_sim_spoofs(trials_per_motif = 3,sigma=None):
+    start_time = time.time()
+    spoofs = []
+    failures = 0
+    for it, motif in enumerate(tqdm(bio_motifs, desc='bio_motifs')):
+        bio_ic = motif_ic(motif)
+        these_spoofs = [spoof_motif_oo(motif,num_motifs=10, Ne_tol=10**-3,sigma=sigma)
+                        for i in range(trials_per_motif)]
+        spoofs.append(these_spoofs)
+        spoof_ics = map(motif_ic, concat(these_spoofs))
+        lb, ub = mean_ci(spoof_ics)
+        out_of_bounds = (not (lb <= bio_ic <= ub))
+        failures += out_of_bounds
+        fail_perc = failures/float(it+1)
+        print it,"bio_ic:", bio_ic, "spoof_ci: (%s,%s)" % (lb, ub), "*" * out_of_bounds,"failures:","%1.2f" % fail_perc
+    stop_time = time.time()
+    print "total time:", stop_time  - start_time
+    return spoofs
+
 def make_gle_evo_sim_spoofs(trials_per_motif = 3):
     start_time = time.time()
     spoofs = []
@@ -581,32 +600,41 @@ def make_gle_evo_sim_spoofs(trials_per_motif = 3):
     stop_time = time.time()
     print "total time:", stop_time  - start_time
     return spoofs
-    
-def interpret_gle_evo_sim_spoofs(spoofs,filename=None):
-    #bio_motifs = [getattr(tfdf,tf) for tf in tfdf.tfs]
-    # spoofs = [[spoof_motif_cftp(motif,Ne_tol=10**-2)
-    #            for i in range(trials_per_motif)]
-    #           for motif in tqdm(bio_motifs,desc='bio motifs')]
-    trials_per_motif = len(spoofs[0])
-    bio_ics = [motif_ic(motif) for motif in bio_motifs
-               for _ in range(trials_per_motif)]
-    sim_ics = [mean(map(motif_ic,motifs))
-               for spoof in spoofs for motifs in spoof]
-    bio_ginis = [motif_gini(motif) for motif in bio_motifs
-               for _ in range(trials_per_motif)]
-    sim_ginis = [mean(map(motif_gini,motifs))
-                 for spoof in spoofs for motifs in spoof]
-    bio_log_mis = [log(total_motif_mi(motif)) for motif in bio_motifs
-               for _ in range(trials_per_motif)]
-    sim_log_mis = map(log,[mean(map(total_motif_mi,motifs))
-               for spoof in tqdm(spoofs) for
-               motifs in spoof])
-    lens = [len(motif[0]) for motif in bio_motifs for _ in range(trials_per_motif)]
-    bio_mis = [exp(bio_log_mi)/choose(l,2)
-               for (l, bio_log_mi) in zip(lens, bio_log_mis)]
-    sim_mis = [exp(sim_log_mi)/choose(l,2)
-               for (l, sim_log_mi) in zip(lens, sim_log_mis)]
-    bio_patterns = [find_pattern(motif)[0] for motif in bio_motifs]
+
+def interpret_gle_evo_sim_spoofs(bio_motifs_, spoofs_,filename=None):
+    # assume that structure of spoofs is such that all spoofs for bio_motifs[0] are contained in spoofs[0]
+    trials_per_motif = len(spoofs_[0])
+    bio_motifs = [bio_motif for bio_motif in bio_motifs_ for i in range(trials_per_motif)]
+    sim_motifs = concat(spoofs_)
+    print len(bio_motifs), len(sim_motifs)
+    assert len(bio_motifs) == len(sim_motifs)
+    # bio_ics = [motif_ic(motif) for motif in bio_motifs
+    #            for _ in range(trials_per_motif)]
+    bio_ics = map(motif_ic, bio_motifs)
+    sim_ics = map(motif_ic, sim_motifs)
+    # sim_ics = [mean(map(motif_ic,motifs))
+    #            for spoof in spoofs for motifs in spoof]
+    # bio_ginis = [motif_gini(motif) for motif in bio_motifs
+    #            for _ in range(trials_per_motif)]
+    # sim_ginis = [mean(map(motif_gini,motifs))
+    #              for spoof in spoofs for motifs in spoof]
+    bio_ginis = map(motif_gini,bio_motifs)
+    sim_ginis = map(motif_gini,sim_motifs)
+    # bio_log_mis = [log(total_motif_mi(motif)) for motif in bio_motifs
+    #            for _ in range(trials_per_motif)]
+    # sim_log_mis = map(log,[mean(map(total_motif_mi,motifs))
+    #            for spoof in tqdm(spoofs) for
+    #            motifs in spoof])
+    lens = [len(motif[0]) for motif in bio_motifs]
+    # bio_mis = [total_motif_mi(motif)/choose(l,2)
+    #            for (l, motif) in zip(lens, bio_motifs)]
+    # sim_mis = [total_motif_mi(motif)/choose(l,2)
+    #            for (l, motif) in zip(lens, spoofs)]
+    print "finding mutual information"
+    bio_mis = [total_motif_mi(motif)/choose(l,2) for (l, motif) in tqdm(zip(lens, bio_motifs))]
+    sim_mis = [total_motif_mi(motif)/choose(l,2) for (l, motif) in tqdm(zip(lens, sim_motifs))]
+    print "finding motif structures"
+    bio_patterns = [find_pattern(motif)[0] for motif in tqdm(bio_motifs)]
     pattern_colors = {'direct-repeat':'g','inverted-repeat':'b','single-box':'r'}
     colors = [pattern_colors[p] for p in bio_patterns]
     plt.subplot(1,3,1)
@@ -651,3 +679,13 @@ def find_limits(xs,ys,pad=None):
     if pad is None:
         pad = (max(zs) - min(zs)) * 0.05
     return min(zs) - pad, max(zs) + pad
+
+def make_jaspar_spoofs():
+    sys.path.append("/home/pat/jaspar")
+    from parse_jaspar import jaspar_motifs
+    jaspar_motifs = [motif if len(motif) <= 200 else sample(200,motif,replace=False)
+                     for motif in jaspar_motifs]
+    maxent_spoofs = [spoof_motifs_maxent(motif,10,verbose=True)
+                     for motif in tqdm(jaspar_motifs,desc='jaspar_motifs')]
+    
+
