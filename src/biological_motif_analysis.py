@@ -1,6 +1,6 @@
 from motifs import *
 from maxent_motif_sampling import maxent_motifs_with_ic, find_beta_for_mean_motif_ic, spoof_motifs_maxent
-from uniform_motif_sampling import uniform_motifs_accept_reject as uniform_motifs_with_ic
+from uniform_motif_sampling import uniform_motifs_accept_reject as uniform_motifs_with_ic, spoof_motifs_uniform
 from utils import sample_until,maybesave,concat,motif_ic,motif_gini,total_motif_mi,choose2, choose
 from utils import transpose,pl,bs,random_motif,inverse_cdf_sample,mmap,mean,mode
 from utils import mi_permute,dna_mi,log2, transpose, log_normalize, sample
@@ -686,6 +686,8 @@ def make_jaspar_spoofs():
     jaspar_motifs = [motif if len(motif) <= 200 else sample(200,motif,replace=False)
                      for motif in jaspar_motifs]
     maxent_spoofs = [spoof_motifs_maxent(motif,10,verbose=True)
+                     for motif in tqdm(jaspar_motifs,desc='jaspar_motifs')]
+    uniform_spoofs = [spoof_motifs_uniform(motif,10,verbose=True)
                      for motif in tqdm(jaspar_motifs,desc='jaspar_motifs')]
     
 
