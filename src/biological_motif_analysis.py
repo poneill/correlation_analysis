@@ -582,7 +582,7 @@ def make_oo_evo_sim_spoofs(trials_per_motif = 3,sigma=None):
     print "total time:", stop_time  - start_time
     return spoofs
 
-def make_gle_evo_sim_spoofs(trials_per_motif = 3):
+def make_gle_evo_sim_spoofs(bio_motifs, trials_per_motif = 3):
     start_time = time.time()
     spoofs = []
     failures = 0
@@ -634,7 +634,8 @@ def interpret_gle_evo_sim_spoofs(bio_motifs_, spoofs_,filename=None):
     bio_mis = [total_motif_mi(motif)/choose(l,2) for (l, motif) in tqdm(zip(lens, bio_motifs))]
     sim_mis = [total_motif_mi(motif)/choose(l,2) for (l, motif) in tqdm(zip(lens, sim_motifs))]
     print "finding motif structures"
-    bio_patterns = [find_pattern(motif)[0] for motif in tqdm(bio_motifs)]
+    bio_patterns_ = [find_pattern(motif)[0] for motif in tqdm(bio_motifs_)]
+    bio_patterns = [pattern for pattern in bio_patterns_ for _ in xrange(trials_per_motif)]
     pattern_colors = {'direct-repeat':'g','inverted-repeat':'b','single-box':'r'}
     colors = [pattern_colors[p] for p in bio_patterns]
     plt.subplot(1,3,1)
