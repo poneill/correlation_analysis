@@ -37,10 +37,17 @@ def sample_from_psfm(psfm):
 def site_mu_from_matrix(matrix):
     return sum(map(mean,matrix))
 
-def site_sigma_from_matrix(matrix):
-    """return sd of site energies from matrix"""
-    return sqrt(sum(map(lambda xs:variance(xs,correct=False),matrix)))
+def site_sigma_from_matrix(matrix,correct=False):
+    """return sd of site energies from matrix""" # agrees with estimate_site_sigma
+    return sqrt(sum(map(lambda xs:variance(xs,correct=correct),matrix)))
 
+def estimate_site_sigma_from_matrix(matrix,n=1000):
+    L = len(matrix)
+    return sd([score_seq(matrix,random_site(L)) for i in xrange(n)])
+
+def site_params_from_matrix(matrix):
+    return site_mu_from_matrix(matrix),site_sigma_from_matrix(matrix)
+    
 def sigma_from_matrix(matrix):
     """given a GLE matrix, estimate standard deviation of cell weights,
     correcting for bias of sd estimate.  See:
@@ -48,6 +55,31 @@ def sigma_from_matrix(matrix):
     """
     c = 2*sqrt(2/(3*pi))
     return mean(map(lambda x:sd(x,correct=True),matrix))/c
+
+def site_sigma_from_sigma(sigma, L=10):
+    """given GLE param sigma, find expected site sigma"""
+    return sqrt(3/4.0*L)*sigma
+
+def estimate_site_sigma_from_sigma(sigma,L=10,n=1000):
+    return mean(site_sigma_from_matrix(sample_matrix(L,sigma)) for _ in trange(n))
+
+def test_site_sigma_from_sigma(sigma,L=10,n=1000):
+    return site_sigma_from_sigma(sigma,L),estimate_site_sigma_from_sigma(sigma, L, n)
+
+    
+def on_off_matrix_with_sigma(L,sigma):
+    """given desired sigma, return on-off matrix with matching sigma"""
+    #ep = 4*sqrt(sigma**2/(3.0*L))
+    ep = sigma*(4/sqrt(3))
+    mean_ep = ep/4
+    return [[-ep + mean_ep,mean_ep,mean_ep,mean_ep] for i in range(L)]
+
+def on_off_matrix_with_site_sigma(L,site_sigma):
+    """given desired sigma, return on-off matrix with matching sigma"""
+    #ep = 4*sqrt(sigma**2/(3.0*L))
+    ep = sigma*(4/sqrt(3))
+    mean_ep = ep/4
+    return [[-ep + mean_ep,mean_ep,mean_ep,mean_ep] for i in range(L)]
 
 def matrix_from_motif(seqs,pc=1):
     cols = transpose(seqs)

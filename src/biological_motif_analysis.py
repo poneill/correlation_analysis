@@ -15,8 +15,8 @@ import numpy as np
 from scipy.stats import pearsonr, spearmanr
 import time
 import numpy as np
-from chem_pot_model_on_off import spoof_motif as spoof_motif_oo
-from exact_evo_sim_sampling import spoof_motif_cftp
+from chem_pot_model_on_off import spoof_motifs as spoof_motifs_oo
+from exact_evo_sim_sampling import spoof_motif_cftp as spoof_motif_gle
 from motif_profile import find_pattern
 
 def coverage_region(xs,alpha=0.95):
@@ -588,7 +588,7 @@ def make_gle_evo_sim_spoofs(bio_motifs, trials_per_motif = 3):
     failures = 0
     for it, motif in enumerate(tqdm(bio_motifs, desc='bio_motifs')):
         bio_ic = motif_ic(motif)
-        these_spoofs = [spoof_motif_cftp(motif,num_motifs=10, Ne_tol=10**-2)
+        these_spoofs = [spoof_motif_gle(motif,num_motifs=10, Ne_tol=10**-2)
                         for i in range(trials_per_motif)]
         spoofs.append(these_spoofs)
         spoof_ics = map(motif_ic, concat(these_spoofs))
@@ -689,6 +689,10 @@ def make_jaspar_spoofs():
     maxent_spoofs = [spoof_motifs_maxent(motif,10,verbose=True)
                      for motif in tqdm(jaspar_motifs,desc='jaspar_motifs')]
     uniform_spoofs = [spoof_motifs_uniform(motif,10,verbose=True)
+                     for motif in tqdm(jaspar_motifs,desc='jaspar_motifs')]
+    oo_spoofs = [spoof_motifs_oo(motif,10)
+                     for motif in tqdm(jaspar_motifs,desc='jaspar_motifs')]
+    gle_spoofs = [spoof_motifs_gle(motif,10,verbose=True)
                      for motif in tqdm(jaspar_motifs,desc='jaspar_motifs')]
     
 

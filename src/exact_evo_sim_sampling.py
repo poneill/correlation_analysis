@@ -2,7 +2,7 @@ from utils import random_site, inverse_cdf_sample, inverse_cdf_sampler
 from utils import motif_ic, mean, mutate_site, mh, prod, mean_ci
 from utils import score_seq, argmin, argmax, mmap, choose2
 from utils import normalize, subst, bisect_interval_noisy_ref
-from utils import rslice, sorted_indices, seq_scorer
+from utils import rslice, sorted_indices, seq_scorer, transpose
 from pwm_utils import ringer_motif, sigma_from_matrix, pssm_from_motif, approx_mu
 from why_linear_recognition_sanity_check import sample_matrix
 from math import exp, log
@@ -439,19 +439,18 @@ def sample_motif_cftp(matrix, mu, Ne, n,verbose=False):
     return [sample_site_cftp(matrix, mu, Ne)
             for i in iterator]
     
-def spoof_motif_cftp(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-2):
+def spoof_motif_cftp(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-2,verbose=False):
     n = len(motif)
     L = len(motif[0])
     copies = 10*n
-    if sigma is None:
-        sigma = sigma_from_matrix(pssm_from_motif(motif,pc=1))
+    if sigma is None: sigma = sigma_from_matrix(pssm_from_motif(motif,pc=1))
     print "sigma:", sigma
     bio_ic = motif_ic(motif)
     matrix = sample_matrix(L, sigma)
     mu = approx_mu(matrix, copies=10*n, G=5*10**6)
     print "mu:", mu
     def f(Ne):
-        motifs = [sample_motif_cftp(matrix, mu, Ne, n)
+        motifs = [sample_motif_cftp(matrix, mu, Ne, n, verbose=verbose)
                   for i in trange(trials)]
         return mean(map(motif_ic,motifs)) - bio_ic
     # lb = 1
@@ -466,7 +465,7 @@ def spoof_motif_cftp(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-2):
     # x0 = x0s[argmin(fs)]
     # print "chose:",x0
     # Ne = bisect_interval_noisy_ref(f,x0,lb=1,verbose=True)
-    Ne = log_regress_spec(f,x0s,tol=Ne_tol)
+    Ne = log_regress_spec2(f,x0s,tol=Ne_tol)
     print "Ne:",Ne
     return [sample_motif_cftp(matrix, mu, Ne, n) for _ in trange(num_motifs)]
 
@@ -500,41 +499,106 @@ def log_regress(f,xs, tol=0.1):
     log_xp = -b/m#secant_interval(lin,min(log_xs),max(log_xs))
     return exp(log_xp)
 
-def log_regress_spec(f,xs, tol=0.1):
+def log_regress_spec(f,xs, tol=0.01):
     """find root f(x) = 0 using logistic regression, starting with xs"""
-    print "initial seeding for log_regress"
+    print "initial seeding for log_regress (unweighted)"
     ys = map(f,xs)
     log_xs = map(log,xs)
     plotting = False
     honest_guesses = []
-    while len(honest_guesses) < 2 or abs(exp(honest_guesses[-1]) -
-                                     exp(honest_guesses[-2])) > tol:
+    while len(honest_guesses) < 2 or abs(honest_guesses[-1] -
+                                     honest_guesses[-2]) > tol:
         #print "correlation:",pearsonr(log_xs,ys)
         #lin = poly1d(polyfit(log_xs,ys,1))
         m, b = (polyfit(log_xs,ys,1))
-        if plotting:
-            lin = poly1d([m,b])
-            plt.scatter(log_xs,ys)
-            plt.plot(*pl(lin,log_xs))
-            plt.show()
+        # if plotting:
+        #     lin = poly1d([m,b])
+        #     plt.scatter(log_xs,ys)
+        #     plt.plot(*pl(lin,log_xs))
+        #     plt.show()
         honest_guess = -b/m
         dx = -(honest_guesses[-1] - honest_guess) if honest_guesses else 0
-        log_xp = honest_guess + dx
+        log_xp = honest_guess + 2*dx
         log_xs.append(log_xp)
         yxp = f(exp(log_xp))
         ys.append(yxp)
         honest_guesses.append(honest_guess)
         diff = (abs(exp(honest_guesses[-1]) - exp(honest_guesses[-2]))
                 if len(honest_guesses) > 1 else None)
-        print "honest_guess:",exp(honest_guess),"xp:",exp(log_xp),\
-            "y:",yxp, "diff:",diff
+        # print "honest_guess:",(honest_guess),"xp:",(log_xp),\
+        #     "y:",yxp, "diff:",diff
     #lin = poly1d(polyfit(log_xs,ys,1))
     m, b = (polyfit(log_xs,ys,1))
     log_xp = -b/m#secant_interval(lin,min(log_xs),max(log_xs))
     print "final guess: log_xp:",log_xp
+
     return exp(log_xp)
 
-    
+def weighted_regress_dep(xs,ys, sample_points=100):
+    regress_points = []
+    avg_yval = mean(map(abs,ys))
+    ws = [exp(-abs(y)/avg_yval) for y in ys]
+    for i in xrange(sample_points):
+        rx,ry = inverse_cdf_sample(zip(xs,ys),ws,normalized=False)
+        regress_points.append((rx,ry))
+    rxs,rys = transpose(regress_points)
+    return (polyfit(rxs,rys,1))
+
+def weighted_regress(xs,ys):
+    avg_yval = mean(map(abs,ys))
+    ws = [exp(-abs(y)/avg_yval) for y in ys]
+    return (polyfit(xs,ys,1,w=ws))
+
+def log_regress_spec2(f,xs, tol=0.01, diagnose=False):
+    """find root f(x) = 0 using logistic regression, starting with xs, using weighted regression"""
+    print "initial seeding for log_regress (weighted)"
+    ys = map(f,xs)
+    log_xs = map(log,xs)
+    plotting = False
+    honest_guesses = []
+    while len(honest_guesses) < 2 or abs(honest_guesses[-1] -
+                                     honest_guesses[-2]) > tol:
+        #print "correlation:",pearsonr(log_xs,ys)
+        #lin = poly1d(polyfit(log_xs,ys,1))
+        m, b = weighted_regress(log_xs,ys)
+        # if plotting:
+        #     lin = poly1d([m,b])
+        #     plt.scatter(log_xs,ys)
+        #     plt.plot(*pl(lin,log_xs))
+        #     plt.show()
+        honest_guess = -b/m
+        dx = 0#-(honest_guesses[-1] - honest_guess) if honest_guesses else 0
+        log_xp = honest_guess + 2*dx
+        log_xs.append(log_xp)
+        yxp = f(exp(log_xp))
+        ys.append(yxp)
+        honest_guesses.append(honest_guess)
+        diff = (abs((honest_guesses[-1]) - (honest_guesses[-2]))
+                if len(honest_guesses) > 1 else None)
+        print "honest_guess:",(honest_guess),"xp:",(log_xp),\
+            "y:",yxp, "diff:",diff
+    #lin = poly1d(polyfit(log_xs,ys,1))
+    m, b = weighted_regress(log_xs,ys)#(polyfit(log_xs,ys,1))
+    log_xp = -b/m#secant_interval(lin,min(log_xs),max(log_xs))
+    print "final guess: log_xp:",log_xp
+    if diagnose:
+        return log_xs,ys
+    else:
+        return exp(log_xp)
+
+def interpret_log_regress_spec(xs,ys, weighted=True):
+    honest_guesses = []
+    xmin,xmax = min(xs), max(xs)
+    for i in range(2,len(xs)):
+        xs_, ys_ = xs[:i],ys[:i]
+        m, b = (polyfit(xs_,ys_,1)) if not weighted else weighted_regress(xs_,ys_)
+        lin = poly1d([m,b])
+        honest_guesses.append(-b/m)
+        plt.plot(*pl(lin,[xmin,xmax]),linewidth=0.1)
+    plt.scatter(xs,ys)
+    plt.scatter(honest_guesses,[0]*len(honest_guesses),color='g')
+    plt.scatter(honest_guesses[-1],[0],color='r')
+        
 def sample_motif_cftp_param_study():
     """Examine dependence of IC on sigma, Ne"""
     grid_points = 10

@@ -173,13 +173,21 @@ def uniform_motif_with_ic_rw(n,L,desired_ic,epsilon=0.1,p=None,iterations=None,n
                 x0s = [chain[-1] for chain in chains]
                 iterations *= 2
 
-def uniform_motif_accept_reject(n,L,desired_ic,epsilon=0.1,beta=None,ps=None,count_sampler=None):
+def uniform_motif_accept_reject(n,L,desired_ic,epsilon=0.1,beta=None,ps=None,count_sampler=None,verbose=False):
+    print "uniform motif accept reject:",n,L,desired_ic,beta
     correction_per_col = 3/(2*log(2)*n)
     desired_ic_for_beta = desired_ic + L * correction_per_col
+    if desired_ic_for_beta == 2*L: # if we reach the upper limit, things break down
+        cols = [sample_col_from_count((0,0,0,n)) for _ in range(L)]
+        motif_p = map(lambda site:"".join(site),transpose(cols))
+        return motif_p
     if beta is None:
         beta = find_beta_for_mean_motif_ic(n,L,desired_ic_for_beta)
+        if verbose:
+            print "beta:",beta
     if ps is None:
         ps = count_ps_from_beta(n,beta)
+        print "h(ps):",h(ps)
     if count_sampler is None:
         count_sampler = inverse_cdf_sampler(enumerate_counts(n),ps)
     def rQ_raw():
@@ -194,11 +202,12 @@ def uniform_motif_accept_reject(n,L,desired_ic,epsilon=0.1,beta=None,ps=None,cou
     Imin = desired_ic - epsilon
     Imax = desired_ic + epsilon
     log_M = -beta*Imin
+    if verbose: print "Imin, Imax, log_M:",Imin, Imax, log_M
     def dQ(motif):
         return exp(beta*motif_ic(motif) + log_M)
     def AR(motif):
         return 1.0/dQ(motif)
-    M = exp(-beta*(desired_ic - epsilon)) # which ic? +/- correction
+    #M = exp(-beta*(desired_ic - epsilon)) # which ic? +/- correction
     trials = 0
     while True:
         trials +=1
@@ -206,16 +215,25 @@ def uniform_motif_accept_reject(n,L,desired_ic,epsilon=0.1,beta=None,ps=None,cou
         r = random.random()
         if r < AR(motif):
             return motif
+        if verbose and trials % 100 == 0:
+            print trials, AR(motif)
 
-def uniform_motifs_accept_reject(n,L,desired_ic,num_motifs,epsilon=0.1,beta=None):
+def uniform_motifs_accept_reject(n,L,desired_ic,num_motifs,epsilon=0.1,beta=None,verbose=False):
     if beta is None:
         correction_per_col = 3/(2*log(2)*n)
         desired_ic_for_beta = desired_ic + L * correction_per_col
-        beta = find_beta_for_mean_motif_ic(n,L,desired_ic_for_beta)
+        beta = find_beta_for_mean_motif_ic(n,L,desired_ic_for_beta,verbose=verbose)
     ps = count_ps_from_beta(n,beta)
     count_sampler = inverse_cdf_sampler(enumerate_counts(n),ps)
     return [uniform_motif_accept_reject(n,L,desired_ic,epsilon=epsilon,beta=beta,
-                                        ps=ps,count_sampler=count_sampler) for i in trange(num_motifs)]
+                                        ps=ps,count_sampler=count_sampler,verbose=verbose)
+            for i in trange(num_motifs)]
+
+def spoof_motifs_uniform(motif, num_motifs, epsilon=0.1,verbose=False):
+    n, L = len(motif), len(motif[0])
+    desired_ic = motif_ic(motif)
+    if verbose: print "starting spoof motifs uniform with:",n,L,desired_ic
+    return uniform_motifs_accept_reject(n, L, desired_ic, num_motifs, epsilon, verbose=verbose)
     
 def inrange(M,I,epsilon):
     return abs(motif_ic(M)-I) < epsilon

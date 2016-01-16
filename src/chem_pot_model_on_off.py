@@ -1,6 +1,6 @@
 from utils import choose, log_choose, inverse_cdf_sample, permute, secant_interval, show, normalize, kde_regress
 from utils import maybesave, pl, bisect_interval, mean, log2, motif_ic
-from utils import bisect_interval_noisy, mmap, motif_gini, total_motif_mi
+from utils import bisect_interval_noisy, mmap, motif_gini, total_motif_mi, choose2
 from math import log, exp
 from scipy.optimize import minimize
 from scipy.stats import pearsonr
@@ -11,6 +11,9 @@ from pwm_utils import site_sigma_from_matrix, psfm_from_motif, sigma_from_matrix
 from pwm_utils import pssm_from_motif
 from matplotlib import pyplot as plt
 from tqdm import *
+from exact_evo_sim_sampling import log_regress_spec2
+import itertools
+
 G = 5*10**6
 
 def prior(k,L):
@@ -79,6 +82,7 @@ def p_from_copies(k,sigma,Ne,L,copies):
     return p(k,sigma,mu,Ne,L)
 
 def ps_from_copies(sigma,Ne,L,copies,approx=True):
+    print "ps from copies:", sigma, Ne, L, copies
     if approx:
         mu = approx_mu(G, sigma, L, copies)
     else:
@@ -135,7 +139,7 @@ def sigma_Ne_contour_plot(filename=None):
     plt.colorbar()
     maybesave(filename)
     
-def spoof_motif(motif, num_motifs=10, trials=10, sigma=None,Ne_tol=10**-4):
+def spoof_motif_ref(motif, num_motifs=10, trials=10, sigma=None,Ne_tol=10**-4):
     n = len(motif)
     L = len(motif[0])
     copies = 10*n
@@ -159,7 +163,24 @@ def spoof_motif(motif, num_motifs=10, trials=10, sigma=None,Ne_tol=10**-4):
     Ne = mean(Nes)
     print "Nes:",Nes,Ne
     return [sample_motif(sigma, Ne, L, copies, n) for _ in range(num_motifs)]
-    
+
+def spoof_motifs(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-4,double_sigma=True):
+    n = len(motif)
+    L = len(motif[0])
+    copies = 10*n
+    if sigma is None:
+        sigma = sigma_from_matrix(pssm_from_motif(motif,pc=1))
+    epsilon = (1+double_sigma)*sigma # 15 Jan 2016
+    print "sigma:", sigma
+    bio_ic = motif_ic(motif)
+    def f(Ne):
+        ps = ps_from_copies(sigma, Ne, L, copies)
+        motifs = [sample_motif(epsilon, Ne, L, copies, n,ps=ps)
+                  for i in range(trials)]
+        return mean(map(motif_ic,motifs)) - bio_ic
+    Ne = log_regress_spec2(f,[1,10],tol=10**-3)
+    return [sample_motif(sigma, Ne, L, copies, n) for _ in range(num_motifs)]
+
     
 def sample_ic(sigma,mu,Ne,L,n,trials=1000):
     return mean(motif_ic(sample_motif(sigma,mu,Ne,L,n)) for i in range(trials))
@@ -397,4 +418,60 @@ def check_hit_hit(k,L,trials=1000):
         return (0 in hits) and (1  in hits)
     return mean(trial() for _ in range(trials))
 
+def mm_site(L,k):
+    """return site consisting of L-k matches and k mismatches, uniformly at random"""
+    mms = random.choice(list(itertools.combinations(range(L),k)))
+    return "".join(["A" if not i in mms else random.choice("CGT") for i in range(L)])
+
+def mm_motif(L,n,k):
+    return [mm_site(L,k) for i in xrange(n)]
+
+def expected_ic(L,k):
+    L = float(L)
+    q = k/L # prob mismatch
+    p = 1 - q
+    h_per_col = - ((p*log2(p) if p else 0) + (q*log2(q/3) if q else 0))
+    ic_per_col = 2 - h_per_col
+    return ic_per_col * L
+
+def test_expected_ic(L,n):
+    plt.plot([expected_ic(L,k) for k in range(L + 1)])
+    plt.scatter(range(L+1),[motif_ic(mm_motif(L,n,k))
+                            for k in trange(L + 1)])
+    
+    
+def expected_mi(L,k):
+    """expected MI between two columns, given site length L and k mismatches per site"""
+    L = float(L)
+    q = k/L # prob mismatch
+    p = 1 - q
+    match = lambda b:b=="A"
+    mismatch = lambda b:b!="A"
+    def joint(b1,b2):
+        if match(b1):
+             if match(b2):
+                 return (L-k)/L * (L-k-1)/(L-1)
+             else:
+                 return (L - k)/L * k/(L - 1) / 3.0
+        else:
+            if match(b2):
+                return (k)/L * (L-k)/(L-1) / 3.0
+            else:
+                return (k)/L * (k-1)/(L-1) / 9.0
+    def marg(b):
+        return p if match(b) else q/3
+    return sum(joint(b1,b2)*log2(joint(b1,b2)/(marg(b1)*marg(b2))) if joint(b1,b2) else 0
+               for b1,b2 in choose2("ACGT"))
+
+def expected_mi2(L,k):
+    possible_sites = choose(L,k)*(1**(L-k))*(3**k)
+    total_IC = 2*L - log2(possible_sites)
+    return total_IC - expected_ic(L,k)
+
+def test_expected_mi(L,n):
+    plt.plot([expected_mi(L,k)*choose(L,2) for k in range(L + 1)])
+    plt.plot([expected_mi2(L,k) for k in range(L + 1)])
+    plt.scatter(range(L+1),[mean((total_motif_mi(mm_motif(L,n,k))) for i in range(10))
+                            for k in trange(L + 1)])
+        
     

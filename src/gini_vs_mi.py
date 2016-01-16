@@ -53,10 +53,11 @@ def on_off_experiment1():
     print "Pearson correlation:",pearsonr(ginis,mis)
     print "parameters:", param_string
 
-def on_off_experiment2():
+def on_off_experiment2(num_motifs=100,filename="gini-vs-mi-correlation-in-on-off-spoofs.pdf"):
     """compare MI vs Gini on biological_motifs"""
     bio_motifs = [getattr(tfdf,tf) for tf in tfdf.tfs]
-    spoofses = [spoof_on_off_motif(motif,num_motifs=100,trials=1) for motif in bio_motifs]
+    Ns = map(len, bio_motifs)
+    spoofses = [spoof_on_off_motif(motif,num_motifs=num_motifs,trials=1) for motif in bio_motifs]
     spoof_ginises = mmap(motif_gini,tqdm(spoofses))
     spoof_mises = mmap(total_motif_mi,tqdm(spoofses))
     cors, ps = [],[]
@@ -66,7 +67,7 @@ def on_off_experiment2():
         ps.append(p)
     q = fdr(ps)
     
-    plt.scatter(cors,ps)
+    plt.scatter(cors,ps,filename="gini-vs-mi-correlation-in-on-off-spoofs.pdf")
     plt.plot([-1,1],[q,q],linestyle='--',label="FDR-Adjusted Significance Level")
     plt.semilogy()
     plt.legend()
@@ -74,6 +75,13 @@ def on_off_experiment2():
     plt.ylabel("P value")
     plt.xlim([-1,1])
     plt.ylim([10**-4,1+1])
+    cor_ps = zip(cors,ps)
+    sig_negs = [(c,p) for (c,p) in cor_ps if c < 0 and p < q]
+    sig_poses = [(c,p) for (c,p) in cor_ps if c > 0 and p < q]
+    insigs = [(c,p) for (c,p) in cor_ps if p > q]
+    def weighted_correlation(cor_p_Ns):
+        cors,ps,Ns = transpose(cor_p_Ns)
+        return sum([cor*N for (cor,N) in zip (cors,Ns)])/sum(Ns)
     plt.title("Gini-MI Correlation Coefficient vs. P-value for On-Off Simulations from Prokaryotic Motifs")
-    maybesave("gini-vs-mi-correlation-in-on-off-spoofs.pdf")
+    maybesave(filename)
     
