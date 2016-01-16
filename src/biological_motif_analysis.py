@@ -719,3 +719,14 @@ def prokaryotic_gini_comparison(filename=None):
     scatter(uniform_ginis,gle_ginis)
     plt.suptitle("Gini Coefficients for GLE Simulations vs. MaxEnt, TU Distributions")
     maybesave(filename)
+
+def discrete_parallelogram_plot(filename=None):
+    motifs = concat([maxent_motifs_with_ic(100,10,ic,10) for ic in tqdm(np.linspace(0.5,19.5,100))])
+    ics = map(motif_ic,motifs)
+    mis = map(total_motif_mi,motifs)
+    plt.scatter(ics,mis)
+    plt.xlabel("IC (bits)")
+    plt.ylabel("Pairwise MI (bits)")
+    plt.title("IC vs Pairwise MI for MaxEnt Motifs")
+    maybesave(filename)
+    
