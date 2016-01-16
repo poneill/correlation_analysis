@@ -696,3 +696,26 @@ def make_jaspar_spoofs():
                      for motif in tqdm(jaspar_motifs,desc='jaspar_motifs')]
     
 
+def prokaryotic_gini_comparison(filename=None):
+    """spoof prokaryotic motifs using maxent, uniform and GLE evosims,
+    showing gini is higher in GLE than in maxent, uniform"""
+    maxent_spoofs = [spoof_motifs_maxent(motif,10,verbose=True)
+                     for motif in tqdm(bio_motifs,desc='bio_motifs')]
+    uniform_spoofs = [spoof_motifs_uniform(motif,10,verbose=True)
+                     for motif in tqdm(bio_motifs,desc='bio_motifs')]
+    oo_spoofs = [spoof_motifs_oo(motif,10)
+                     for motif in tqdm(bio_motifs,desc='bio_motifs')]
+    gle_spoofs = [concat([spoof_motif_gle(motif,10,verbose=True) for i in range(1)])
+                  for motif in tqdm(bio_motifs,desc='bio_motifs')]
+    maxent_ginis = [mean(map(motif_gini,spoofs)) for spoofs in maxent_spoofs]
+    uniform_ginis = [mean(map(motif_gini,spoofs)) for spoofs in uniform_spoofs]
+    gle_ginis = [mean(map(motif_gini,spoofs)) for spoofs in gle_spoofs]
+    plt.subplot(1,2,1)
+    scatter(maxent_ginis,gle_ginis)
+    plt.xlabel("MaxEnt")
+    plt.ylabel("GLE")
+    plt.subplot(1,2,2)
+    plt.xlabel("TU")
+    scatter(uniform_ginis,gle_ginis)
+    plt.suptitle("Gini Coefficients for GLE Simulations vs. MaxEnt, TU Distributions")
+    maybesave(filename)
