@@ -10,6 +10,7 @@ import numpy as np
 from tqdm import *
 from math import exp, log
 from scipy import stats
+import time
 
 def plot(filename=None):
     L = 10
@@ -113,3 +114,116 @@ def plot3(filename=None, trials=50):
             plt.ylabel("%s IC (bits)" % y)
             maybesave("%s-vs-%s-IC%s.eps" % (x,y,ic))
     return ME, TURS, TURW, TUGR
+
+def validation_and_runtime_final(filename=None):
+    trials = 3
+    num_motifs = 100
+    ns = [20,50,100,200]
+    L = 10
+    ics_per = [0.5,1,1.5]
+    maxent_times = {}
+    maxent_motifs = {}
+    uniform_times = {}
+    uniform_motifs = {}
+    for n in ns:
+        for ic_per in ics_per:
+            print "n,ic:",n,ic_per
+            t = time.time()
+            maxents = [maxent_motifs_with_ic(n,L,ic_per*L, num_motifs=num_motifs) for _ in xrange(trials)]
+            total_time = time.time() - t
+            maxent_motifs[(n,ic_per)] = maxents
+            print "total time:",total_time
+            maxent_times[(n,ic_per)] = total_time/(trials*num_motifs)
+            t = time.time()
+            uniforms = [uniform_motifs_accept_reject(n,L,ic_per*L, num_motifs=num_motifs) for _ in xrange(trials)]
+            total_time = time.time() - t
+            print "total time:",total_time
+            uniform_motifs[(n,ic_per)] = uniforms
+            uniform_times[(n,ic_per)] = total_time/(trials*num_motifs)
+    # scatter([L*ic_per for (_,ic_per) in maxent_motifs.keys()],
+    #         [(mean(map(motif_ic,concat(motifs)))) for motifs in maxent_motifs.values()])
+    # scatter([L*ic_per for (_,ic_per) in uniform_motifs.keys()],
+    #         [(mean(map(motif_ic,concat(motifs)))) for motifs in uniform_motifs.values()])
+
+    plt.subplot(2,2,1)
+    # plt.boxplot([((map(motif_ic,concat(maxent_motifs[n,ic_per])))) for ic_per in ics_per for n in ns])
+    # plt.xticks(range(len(ics_per)*len(ns)),
+    #            ["IC: %s, N:%s" % (ic_per*L,n) for ic_per in ics_per for n in ns],rotation=45)
+    colors = {i:c for (i,c) in zip(ics_per,'blue green red'.split())}
+    markers = {i:c for (i,c) in zip(ics_per,'o s ^'.split())}
+    plt.title("MaxEnt Motif IC")
+    maxent_ics = [((map(motif_ic,concat(maxent_motifs[n,ic_per])))) for n in ns for ic_per in ics_per]
+    num_points = trials * num_motifs
+    [plt.scatter([jitter(n,dev=5)  for _ in range(num_points)],
+                 [(map(motif_ic,concat(maxent_motifs[n,ic_per])))],
+                 color=colors[ic_per],
+                 s=1,
+                 marker=markers[ic_per],
+                 label=('IC=%d' % (ic_per*L))*(n==20)) for n in ns for ic_per in ics_per]
+    # box = plt.boxplot(maxent_ics,patch_artist=True)
+    # colors = concat([['blue','green','red'] for n in ns])
+    # for patch, color in zip(box['boxes'], colors): patch.set_facecolor(color)
+    plt.legend(markerscale=5,frameon=True,loc='lower right')
+    plt.ylim(0,20)
+    plt.ylabel("IC (bits)")
+    plt.xlim(0,300)
+    plt.xticks(ns,ns)
+    plt.xlabel("N")
+    
+    plt.subplot(2,2,2)
+    plt.title("Uniform Motif IC")
+    uniform_ics = [((map(motif_ic,concat(uniform_motifs[n,ic_per])))) for n in ns for ic_per in ics_per]
+    [plt.scatter([jitter(n,dev=5)  for _ in range(num_points)],
+                 [(map(motif_ic,concat(uniform_motifs[n,ic_per])))],
+                 color=colors[ic_per],
+                 s=1,
+                 marker=markers[ic_per],
+                 label=('IC=%d' % (ic_per*L))*(n==20)) for n in ns for ic_per in ics_per]
+    # box = plt.boxplot(uniform_ics,patch_artist=True)
+    # colors = concat([['blue','green','red'] for n in ns])
+    # for patch, color in zip(box['boxes'], colors): patch.set_facecolor(color)
+    plt.legend(markerscale=5,frameon=True,loc='lower right')
+    plt.ylim(0,20)
+    plt.ylabel("IC (bits)")
+    #plt.xticks([2,5,8,11],ns)
+    plt.xlim(0,300)
+    plt.xticks(ns,ns)
+    plt.xlabel("N")
+
+    plt.subplot(2,2,3)
+    plt.title("MaxEnt Runtime")
+    #[plt.plot(ns,[maxent_times[n,ic_per] for n in ns],label='IC:%s' % (ic_per*L),marker='o') for ic_per in ics_per]
+    [plt.plot(ns,
+              [maxent_times[n,ic_per] for n in ns],
+              label='IC=%d' % (ic_per*L),
+              marker=markers[ic_per],
+              alpha=0.1) for ic_per in ics_per]
+    plt.semilogy()
+    plt.xlabel("N")
+    plt.xlim(0,300)
+    plt.xticks(ns,ns)
+    plt.ylim(10**-4,1)
+    plt.ylabel("Time (s)")
+    plt.legend(loc='lower right',frameon=True)
+
+    plt.subplot(2,2,4)
+    plt.title("Uniform Runtime")
+    #[plt.plot(ns,[uniform_times[n,ic_per] for n in ns],label='IC=%d' % (ic_per*L),marker='o') for ic_per in ics_per]
+    [plt.plot(ns,
+              [uniform_times[n,ic_per] for n in ns],label='IC=%d' % (ic_per*L),
+              marker=markers[ic_per]) for ic_per in ics_per]
+    plt.semilogy()
+    plt.xlabel("N")
+    plt.xlim(0,300)
+    plt.ylim(10**-4,1)
+    #plt.xticks([2,5,8,11],ns)
+    plt.xticks(ns,ns)
+    plt.semilogy()
+    plt.xlabel("N")
+    plt.ylabel("Time (s)")
+    plt.legend(loc='lower right',frameon=True)
+    plt.tight_layout()
+    maybesave(filename)
+
+def jitter(x,dev=0.1):
+    return x + (random.random() - 0.5)/0.5 * dev
