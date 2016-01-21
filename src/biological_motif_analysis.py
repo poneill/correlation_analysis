@@ -721,7 +721,7 @@ def prokaryotic_gini_comparison(filename=None):
     maybesave(filename)
 
 def discrete_parallelogram_plot(filename=None):
-    motifs = concat([maxent_motifs_with_ic(100,10,ic,10) for ic in tqdm(np.linspace(0.5,19.5,100))])
+    motifs = concat([maxent_motifs_with_ic(200,10,ic,10) for ic in tqdm(np.linspace(0.5,19.5,100))])
     ics = map(motif_ic,motifs)
     mis = map(total_motif_mi,motifs)
     plt.scatter(ics,mis)
@@ -753,3 +753,42 @@ def gini_vs_mi_comparison(filename=None):
     plt.title("Eukaryotic Motifs")
     plt.suptitle("Mutual Information vs Gini Coefficient")
     maybesave(filename)
+
+def compiled_vs_chipseq_experiment():
+    """do compiled motifs have higher ginis than chipseq?"""
+    sys.path.append("/home/pat/jaspar")
+    from parse_jaspar import compiled_jaspar_motifs, chipseq_jaspar_motifs
+    chipseq_jaspar_motifs = [motif if len(motif) <= 200 else sample(200,motif,replace=False)
+                             for motif in chipseq_jaspar_motifs]
+    compiled_spoofs = [spoof_motifs_maxent(motif,num_motifs=100) for motif in compiled_jaspar_motifs]
+    chipseq_spoofs = [spoof_motifs_maxent(motif,num_motifs=100) for motif in chipseq_jaspar_motifs]
+    compiled_bio_ics = map(motif_ic, compiled_jaspar_motifs)
+    chipseq_bio_ics = map(motif_ic, chipseq_jaspar_motifs)
+    compiled_bio_ginis = map(motif_gini, compiled_jaspar_motifs)
+    chipseq_bio_ginis = map(motif_gini, chipseq_jaspar_motifs)
+    compiled_spoof_ginis = [mean(map(motif_gini,spoofs)) for spoofs in compiled_spoofs]
+    chipseq_spoof_ginis = [mean(map(motif_gini,spoofs)) for spoofs in chipseq_spoofs]
+    plt.subplot(1,2,1)
+    scatter(compiled_spoof_ginis, compiled_bio_ginis)
+    plt.subplot(1,2,2)
+    scatter(chipseq_spoof_ginis, chipseq_bio_ginis)
+    
+
+def bio_detector_experiment(filename=None):
+    """use high Gini to detect biological motifs"""
+    bio_ginis = map(motif_gini, bio_motifs)
+    maxent_spoofs = [spoof_motifs_maxent(motif,num_motifs=100) for motif in tqdm(bio_motifs)]
+    maxent_ginis = mmap(motif_gini, maxent_spoofs)
+    ps = zipWith(percentile,bio_ginis, maxent_ginis)
+    neg_controls = map(first, maxent_spoofs)
+    neg_control_spoofs = [spoof_motifs_maxent(motif,num_motifs=100) for motif in tqdm(neg_controls)]
+    nc_ps = zipWith(percentile,map(motif_gini,neg_controls), mmap(motif_gini, neg_control_spoofs))
+    roc_curve(ps, nc_ps)
+    maybesave(filename)
+
+def bio_dectector(motif,p=1.0):
+    maxent_spoofs = spoof_motifs_maxent(motif,num_motifs=100)
+    bio_gini = motif_gini(motif)
+    maxent_ginis = map(motif_gini,maxent_spoofs)
+    return percentile(bio_gini, maxent_ginis) >= p
+        
