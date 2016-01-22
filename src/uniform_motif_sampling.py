@@ -187,7 +187,6 @@ def uniform_motif_accept_reject(n,L,desired_ic,epsilon=0.1,beta=None,ps=None,cou
             print "beta:",beta
     if ps is None:
         ps = count_ps_from_beta(n,beta)
-        print "h(ps):",h(ps)
     if count_sampler is None:
         count_sampler = inverse_cdf_sampler(enumerate_counts(n),ps)
     def rQ_raw():

@@ -18,6 +18,7 @@ import numpy as np
 from chem_pot_model_on_off import spoof_motifs as spoof_motifs_oo
 from exact_evo_sim_sampling import spoof_motif_cftp as spoof_motif_gle
 from motif_profile import find_pattern
+import cPickle
 
 def coverage_region(xs,alpha=0.95):
     n = len(xs)
@@ -731,6 +732,10 @@ def discrete_parallelogram_plot(filename=None):
     maybesave(filename)
     
 def gini_vs_mi_comparison(filename=None):
+    sys.path.append("/home/pat/jaspar")
+    from parse_jaspar import euk_motifs
+    euk_motifs = [motif if len(motif) <= 200 else sample(200,motif,replace=False)
+                     for motif in euk_motifs]
     prok_ginis = map(motif_gini,bio_motifs)
     prok_mis = map(total_motif_mi,tqdm(bio_motifs))
     prok_mipps = map(motif_mi_pp,tqdm(bio_motifs))
@@ -786,9 +791,109 @@ def bio_detector_experiment(filename=None):
     roc_curve(ps, nc_ps)
     maybesave(filename)
 
+def bio_detector_experiment_prok_euk(filename=None):
+    #use data from prok_euk_ic_gini_experiment
+    prok_motifs = bio_motifs
+    euk_motifs = [motif if len(motif) <= 200 else sample(200,motif,replace=False)
+                     for motif in euk_motifs]
+    with open("prok_euk_ic_gini_experiment.pkl") as f:
+        (prok_maxents, prok_uniforms, euk_maxents, euk_uniforms) = cPickle.load(f)
+    prok_bio_ginis = map(motif_gini, prok_motifs)
+    euk_bio_ginis = map(motif_gini, euk_motifs)
+    prok_ps = [percentile(bio_gini,map(motif_gini,spoofs)) for bio_gini,spoofs in zip(prok_bio_ginis,prok_maxents)]
+    prok_spoofs = [spoofs[0] for spoofs in prok_maxents]
+    prok_neg_ps = [percentile(motif_gini(spoof),map(motif_gini,spoofs))
+                   for spoof,spoofs in zip(prok_spoofs,prok_maxents)]
+    euk_ps = [percentile(bio_gini,map(motif_gini,spoofs)) for bio_gini,spoofs in zip(euk_bio_ginis,euk_maxents)]
+    euk_spoofs = [spoofs[0] for spoofs in euk_maxents]
+    euk_neg_ps = [percentile(motif_gini(spoof),map(motif_gini,spoofs))
+                  for spoof,spoofs in zip(euk_spoofs,euk_maxents)]
+    roc_curve(prok_ps + euk_ps,prok_neg_ps + euk_neg_ps)
+    maybesave(filename)
+    
 def bio_dectector(motif,p=1.0):
     maxent_spoofs = spoof_motifs_maxent(motif,num_motifs=100)
     bio_gini = motif_gini(motif)
     maxent_ginis = map(motif_gini,maxent_spoofs)
     return percentile(bio_gini, maxent_ginis) >= p
         
+def prok_euk_ic_gini_experiment():
+    sys.path.append("/home/pat/jaspar")
+    from parse_jaspar import euk_motifs
+    prok_motifs = bio_motifs
+    euk_motifs = [motif if len(motif) <= 200 else sample(200,motif,replace=False)
+                     for motif in euk_motifs]
+    print "prok maxents"
+    prok_maxents = [spoof_motifs_maxent(motif,num_motifs=100) for motif in tqdm(prok_motifs)]
+    print "prok uniforms"
+    prok_uniforms = [spoof_motifs_uniform(motif,num_motifs=100) for motif in tqdm(prok_motifs)]
+    print "euk maxents"
+    euk_maxents = [spoof_motifs_maxent(motif,num_motifs=100) for motif in tqdm(euk_motifs)]
+    print "euk uniforms"
+    euk_uniforms = [spoof_motifs_uniform(motif,num_motifs=100) for motif in tqdm(euk_motifs)]
+    with open("prok_euk_ic_gini_experiment.pkl",'w') as f:
+        cPickle.dump((prok_maxents, prok_uniforms, euk_maxents, euk_uniforms), f)
+    prok_ics = map(motif_ic, prok_motifs)
+    prok_ginis = map(motif_gini, prok_motifs)
+    euk_ics = map(motif_ic, euk_motifs)
+    euk_ginis = map(motif_gini, euk_motifs)
+    prok_maxent_ics = [mean(map(motif_ic,motifs)) for motifs in prok_maxents]
+    prok_maxent_ginis = [mean(map(motif_gini,motifs)) for motifs in prok_maxents]
+    prok_uniform_ics = [mean(map(motif_ic,motifs)) for motifs in prok_uniforms]
+    prok_uniform_ginis = [mean(map(motif_gini,motifs)) for motifs in prok_uniforms]
+    euk_maxent_ics = [mean(map(motif_ic,motifs)) for motifs in euk_maxents]
+    euk_maxent_ginis = [mean(map(motif_gini,motifs)) for motifs in euk_maxents]
+    euk_uniform_ics = [mean(map(motif_ic,motifs)) for motifs in euk_uniforms]
+    euk_uniform_ginis = [mean(map(motif_gini,motifs)) for motifs in euk_uniforms]
+    prok_patterns = [find_pattern(motif)[0] for motif in tqdm(prok_motifs)]
+    euk_patterns = [find_pattern(motif)[0] for motif in tqdm(euk_motifs)]
+    pattern_colors = {'direct-repeat':'g','inverted-repeat':'b','single-box':'r'}
+    prok_colors = [pattern_colors[p] for p in prok_patterns]
+    euk_colors = [pattern_colors[p] for p in euk_patterns]
+    
+    plt.subplot(2,2,1)
+    scatter(prok_maxent_ics,prok_ics,color=prok_colors)
+    plt.ylabel("Prokaryotic IC (bits)")
+    plt.xlim(0,35)
+    plt.ylim(0,35)
+    plt.subplot(2,2,2)
+    scatter(prok_uniform_ics,prok_ics,color=prok_colors)
+    plt.xlim(0,35)
+    plt.ylim(0,35)
+    plt.subplot(2,2,3)
+    scatter(euk_maxent_ics,euk_ics, color=euk_colors)
+    plt.ylabel("Eukaroytic IC (bits)")
+    plt.xlabel("Maxent IC (bits)")
+    plt.xlim(0,35)
+    plt.ylim(0,35)
+    plt.subplot(2,2,4)
+    plt.xlim(0,35)
+    plt.ylim(0,35)
+    scatter(euk_uniform_ics,euk_ics,color=euk_colors)
+    plt.xlabel("Uniform IC (bits)")
+    maybesave("biological-ics.eps")
+
+    plt.subplot(2,2,1)
+    plt.xlim(0,0.4)
+    plt.ylim(0,0.6)
+    scatter(prok_maxent_ginis,prok_ginis,color=prok_colors)
+    plt.ylabel("Prokaryotic Gini Coefficient (bits)")
+    plt.subplot(2,2,2)
+    plt.xlim(0,0.4)
+    plt.ylim(0,0.6)
+    scatter(prok_uniform_ginis,prok_ginis,color=prok_colors)
+    plt.subplot(2,2,3)
+    plt.xlim(0,0.4)
+    plt.ylim(0,0.6)
+    scatter(euk_maxent_ginis,euk_ginis, color=euk_colors)
+    plt.ylabel("Eukaroytic Gini Coefficient")
+    plt.xlabel("Maxent Gini Coefficient")
+    plt.subplot(2,2,4)
+    plt.xlim(0,0.4)
+    plt.ylim(0,0.6)
+    scatter(euk_uniform_ginis,euk_ginis,color=euk_colors)
+    plt.xlabel("Uniform Gini Coefficient")
+    maybesave("biological-ginis.eps")
+    
+    
+    

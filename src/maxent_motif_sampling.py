@@ -5,7 +5,7 @@ distribution on entropy.
 # Maxent sampling methods
 from utils import h, fac, prod, normalize, inverse_cdf_sample, inverse_cdf_sampler, log_fac
 from utils import permute, concat, transpose, bisect_interval, secant_interval, motif_ic
-from utils import log_normalize, np_log_normalize
+from utils import log_normalize, np_log_normalize, mh
 from math import exp, log
 from collections import Counter
 from tqdm import *

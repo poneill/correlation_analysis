@@ -5,7 +5,7 @@ from uniform_motif_sampling import uniform_motifs_with_ic_rw_harmonic, uniform_m
 from matplotlib import pyplot as plt
 import seaborn as sns
 from utils import motif_ic, motif_gini, maybesave, concat, mmap, total_motif_mi
-from utils import pairs, qqplot
+from utils import pairs, qqplot, fdr, count
 import numpy as np
 from tqdm import *
 from math import exp, log
@@ -154,7 +154,7 @@ def validation_and_runtime_final(filename=None):
     plt.title("MaxEnt Motif IC")
     maxent_ics = [((map(motif_ic,concat(maxent_motifs[n,ic_per])))) for n in ns for ic_per in ics_per]
     num_points = trials * num_motifs
-    [plt.scatter([jitter(n,dev=5)  for _ in range(num_points)],
+    [plt.scatter([jitter(n,dev=2) + 10*(ics_per.index(ic_per)-1)  for _ in range(num_points)],
                  [(map(motif_ic,concat(maxent_motifs[n,ic_per])))],
                  color=colors[ic_per],
                  s=1,
@@ -227,3 +227,31 @@ def validation_and_runtime_final(filename=None):
 
 def jitter(x,dev=0.1):
     return x + (random.random() - 0.5)/0.5 * dev
+
+def validation_ic_vs_gini():
+    L = 10; N = 50
+    ics = np.linspace(0.1,19,100)
+    maxentses = [maxent_motifs_with_ic(N,L,ic,num_motifs=10) for ic in tqdm(ics)]
+    uniformses = [uniform_motifs_accept_reject(N,L,ic,num_motifs=10) for ic in tqdm(ics)]
+    
+    maxent_ics = map(motif_ic,concat(maxentses))
+    maxent_ginis = map(motif_gini,concat(maxentses))
+    uniform_ics = map(motif_ic,concat(uniformses))
+    uniform_ginis = map(motif_gini,concat(uniformses))
+    plt.scatter(maxent_ics, maxent_ginis,label='MaxEnt',s=1)
+    plt.scatter(uniform_ics, uniform_ginis,color='g',marker='s',
+                label='Uniform',s=1)
+    plt.xlabel("IC (bits)")
+    plt.ylabel("Gini Coefficient")
+    plt.legend(markerscale=2)
+    maybesave(filename)
+
+    ps = []
+    for maxents, uniforms in zip(maxentses,uniformses):
+        maxent_ginis = map(motif_gini,maxents)
+        uniform_ginis = map(motif_gini,uniforms)
+        stat,p = stats.kruskal(maxent_ginis,uniform_ginis)
+        ps.append(p)
+    q = fdr(ps)
+    print "significant differences:",count(lambda p:p<q,ps)
+        

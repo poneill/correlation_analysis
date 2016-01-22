@@ -1,1 +1,1 @@
-from maxent_motif_sampling import maxent_motifs_with_ic
+from maxent_motif_sampling import maxent_motifs_with_ic, spoof_motif_maxent, spoof_motifs_maxent
