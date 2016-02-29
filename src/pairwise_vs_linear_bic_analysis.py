@@ -256,7 +256,7 @@ def sample_size_dependence_experiment():
     #xxl=plt.xlabel("Motif Size")
     # xxl.set_position((xxl.get_position()[0],1)) # This says use the top of the bottom axis as the reference point.
     # xxl.set_verticalalignment('center')
-    plt.savefig("aic_aicc_bic_cv_comparison.eps",bbox_extra_artists=(leg,),bbox_inches='tight')
+    plt.savefig("aic_bic_cv_comparison.eps",bbox_extra_artists=(leg,),bbox_inches='tight')
     plt.close()
 
     # plt.scatter(map(abslog10,cv_difs), map(abslog10,bic_difs),color=colors)
