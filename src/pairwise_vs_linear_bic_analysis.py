@@ -1,17 +1,22 @@
 from adjacent_pairwise_model import code_from_motif as pairwise_model_from_motif
 from adjacent_pairwise_model import prob_site as pw_prob_site
+from adjacent_pairwise_model import prob_sites as pw_prob_sites
 from adjacent_pairwise_model import sample_site as pw_sample_site
 from adjacent_pairwise_model import sample_code
 from pwm_utils import psfm_from_motif as linear_model_from_motif
-from utils import prod, scatter, cv, mean, transpose, sign, random_site
-from math import log, pi
+from pwm_utils import sample_matrix
+from utils import prod, scatter, cv, mean, transpose, sign, random_site, mutate_motif
+from utils import random_motif, mh, score_seq, motif_ic
+from math import log, pi, exp
 import sys
 from formosa import maxent_motifs
 from matplotlib import pyplot as plt
 from utils import sorted_indices, rslice, roc_curve
 from tqdm import *
 import seaborn as sns
-
+from evo_sampling import sample_motif_cftp
+import random
+import matplotlib as mpl
 log10 = lambda x:log(x,10)
 
 def linear_prob_site(site, psfm):
@@ -19,7 +24,7 @@ def linear_prob_site(site, psfm):
 
 
 def model_comparison(motif,crit="BIC"):
-    assert crit in ["AIC", "BIC"]
+    assert crit in ["AIC","AIC_dep", "AICc", "BIC"]
     L = len(motif[0])
     N = len(motif)
     pw_model = pairwise_model_from_motif(motif)
@@ -32,11 +37,38 @@ def model_comparison(motif,crit="BIC"):
         pw_bic = -2 * pw_ll + pw_k * (log(N) - log(2*pi))
         li_bic = -2 * li_ll + li_k * (log(N) - log(2*pi))
         return pw_bic, li_bic
+    elif crit == "AIC_dep": # multivariate adjustment: seems way too strict!
+        pw_aic = -2*(pw_ll) + 2*(pw_k * L + 1/2.0*L*(L+1))
+        li_aic = -2*(li_ll) + 2*(li_k * L + 1/2.0*L*(L+1))
+        return pw_aic, li_aic
     elif crit == "AIC":
         pw_aic = -2*(pw_ll) + 2*pw_k
         li_aic = -2*(li_ll) + 2*li_k
         return pw_aic, li_aic
+    elif crit == "AICc":
+        pw_aic = -2*(pw_ll) + 2*pw_k * (N/float(N-pw_k-1))
+        li_aic = -2*(li_ll) + 2*li_k * (N/float(N-li_k-1))
+        return pw_aic, li_aic
 
+def is_suitable_linear(motif):
+    N, L = len(motif), len(motif[0])
+    return N > 3*L
+
+def is_suitable_pairwise(motif):
+    N, L = len(motif), len(motif[0])
+    return N > 9 * (L-1)
+
+def suitability_dif(motif):
+    """quick and dirty model comparison test, signed to return positive
+    value of linear model favored, otherwise pairwise value
+    """
+    return -2*int(is_suitable_pairwise(motif)) + 1
+
+def suitability_ratio(motif):
+    """return log ratio of parameters to data (positive favors linear, negative, pairwise)"""
+    N, L = len(motif), len(motif[0])
+    return log10(float(9*(L-1))/N)
+    
 def euk_model_comparison():
     sys.path.append("/home/pat/jaspar")
     from parse_jaspar import jaspar_motifs as euk_motifs
@@ -114,78 +146,134 @@ def sanity_check():
 
 def sample_size_dependence_experiment():
     """is prok=linear, euk=pairwise result merely due to sample size?  plot by N to find out."""
-    prok_bics = [model_comparison(motif,crit="BIC") for motif in tqdm(prok_motifs)]
-    euk_bics = [model_comparison(motif,crit="BIC") for motif in tqdm(euk_motifs)]
-    prok_aics = [model_comparison(motif,crit="AIC") for motif in tqdm(prok_motifs)]
-    euk_aics = [model_comparison(motif,crit="AIC") for motif in tqdm(euk_motifs)]
-    prok_cvs = [cv_analysis(motif) for motif in tqdm(prok_motifs)]
-    euk_cvs = [cv_analysis(motif) for motif in tqdm(euk_motifs)]
+    # suitable_prok_motifs = filter(lambda motif:is_suitable_pairwise(motif) and is_suitable_linear(motif), prok_motifs)
+    # suitable_euk_motifs = filter(lambda motif:is_suitable_pairwise(motif) and is_suitable_linear(motif), euk_motifs)
+    suitable_prok_motifs, suitable_euk_motifs = prok_motifs, euk_motifs
+    use_suit_ratios = True
+    if use_suit_ratios:
+        prok_xs = map(lambda x:-suitability_ratio(x), suitable_prok_motifs)
+        euk_xs = map(lambda x:-suitability_ratio(x), suitable_euk_motifs)
+        xs = prok_xs + euk_xs
+    else:
+        prok_xs = map(len, suitable_prok_motifs)
+        euk_xs = map(len, suitable_euk_motifs)
+        xs = prok_xs + euk_xs
+    prok_bics = [model_comparison(motif,crit="BIC") for motif in tqdm(suitable_prok_motifs)]
+    euk_bics = [model_comparison(motif,crit="BIC") for motif in tqdm(suitable_euk_motifs)]
+    prok_aics = [model_comparison(motif,crit="AIC") for motif in tqdm(suitable_prok_motifs)]
+    euk_aics = [model_comparison(motif,crit="AIC") for motif in tqdm(suitable_euk_motifs)]
+    prok_aiccs = [model_comparison(motif,crit="AICc") for motif in tqdm(suitable_prok_motifs)]
+    euk_aiccs = [model_comparison(motif,crit="AICc") for motif in tqdm(suitable_euk_motifs)]
+    prok_cvs = [cv_analysis(motif) for motif in tqdm(suitable_prok_motifs)]
+    euk_cvs = [cv_analysis(motif) for motif in tqdm(suitable_euk_motifs)]
     bic_difs = [x - y for (x,y) in prok_bics + euk_bics]
     aic_difs = [x - y for (x,y) in prok_aics + euk_aics]
+    aicc_difs = [x - y for (x,y) in prok_aiccs + euk_aiccs]
     cv_difs = [(mean(x-y for (x,y) in lls)) for lls in prok_cvs + euk_cvs]
-    prok_Ns = map(len,prok_motifs)
-    euk_Ns = map(len,euk_motifs)
-    N_colors = [sns.cubehelix_palette(5)[int(round(log10(len(motif))))] for motif in (prok_motifs + euk_motifs)]
+    # prok_Ns = map(len,suitable_prok_motifs)
+    # euk_Ns = map(len,suitable_euk_motifs)
+    N_colors = [sns.cubehelix_palette(5)[int(round(log10(len(motif))))] for motif in (suitable_prok_motifs + suitable_euk_motifs)]
+    max_N = max(prok_Ns + euk_Ns)
 
+    mpl.rcParams['xtick.major.pad'] = 10
+    mpl.rcParams['ytick.major.pad'] = 10
     palette2 = sns.cubehelix_palette(5)
     prok_color = palette2[4]
     euk_color = palette2[1]
-    colors = [prok_color for _ in prok_motifs] + [euk_color for _ in euk_motifs]
-
+    colors = [prok_color for _ in suitable_prok_motifs] + [euk_color for _ in suitable_euk_motifs]
+    xmin = 1 * 5
+    xmax = max_N * 2
     sns.set_style('darkgrid')
     plt.subplot(3,1,1)
-    plt.ylabel("<- Pairwise Better ($\Delta$ BIC) Linear Better ->")
-    plt.scatter(prok_Ns,[abslog10(x-y) for (x,y) in (prok_bics)],label="Prokaryotic Motifs",marker='o',
+    #plt.ylabel("<- Pairwise Better ($\Delta$ BIC) Linear Better ->")
+    plt.ylabel("logmod($\Delta$ BIC)")
+    euk_ys = [logmod(x-y) for (x,y) in (euk_bics)]
+    prok_ys = [logmod(x-y) for (x,y) in (prok_bics)]
+    ys = prok_ys + euk_ys
+    plt.scatter(euk_xs,euk_ys,label="Eukaryotic Motifs",marker='s',color=euk_color)
+    plt.scatter(prok_xs,prok_ys,label="Prokaryotic Motifs",marker='o',
                 color=prok_color)
-    plt.scatter(euk_Ns,[abslog10(x-y) for (x,y) in (euk_bics)],label="Eukaryotic Motifs",marker='s',color=euk_color)
-    # plt.scatter(prok_Ns,[(x-y)/N for (x,y),N in zip(prok_bics,prok_Ns)],label="Prokaryotic Motifs",marker='o',
+    plt.plot([0,0],[min(ys), max(ys)], linestyle='--',color='black')
+    plt.plot([min(xs),max(xs)],[0,0], linestyle='--',color='black')
+    # plt.scatter(prok_xs,[(x-y)/N for (x,y),N in zip(prok_bics,prok_xs)],label="Prokaryotic Motifs",marker='o',
     #              color=prok_color)
-    # plt.scatter(euk_Ns,[(x-y)/N for (x,y),N in zip(euk_bics, euk_Ns)],label="Eukaryotic Motifs",marker='s',
+    # plt.scatter(euk_xs,[(x-y)/N for (x,y),N in zip(euk_bics, euk_xs)],label="Eukaryotic Motifs",marker='s',
     #             color=euk_color)
-    max_N = max(prok_Ns + euk_Ns)
-    plt.plot([1,max_N],[0,0],linestyle='--',color='black')
-    plt.legend()
-    #plt.scatter(prok_Ns+euk_Ns,[abslog(x-y) for (x,y) in (prok_bics + euk_bics)],color=colors)
-    plt.semilogx()
+    #plt.plot([10,max_N],[0,0],linestyle='--',color='black')
+    #plt.xlim(xmin,xmax)
+    leg = plt.legend(frameon=True,bbox_to_anchor=(1,0.75),loc='center left')
+    #plt.scatter(prok_xs+euk_xs,[abslog(x-y) for (x,y) in (prok_bics + euk_bics)],color=colors)
+    #plt.semilogx()
 
+    # plt.subplot(3,1,2)
+    # #plt.ylabel("<- Pairwise Better ($\Delta$ AIC) Linear Better ->")
+    # plt.ylabel("$\Delta$ AIC")
+    # plt.scatter(euk_xs,[logmod(x-y) for (x,y) in euk_aics],label="Eukaryotic Motifs",marker='s',
+    #             color=euk_color)
+    # plt.scatter(prok_xs,[logmod(x-y) for (x,y) in prok_aics],label="Prokaryotic Motifs",marker='o',
+    #              color=prok_color)
+    # plt.xlim(xmin,xmax)
+    # plt.plot([10,max(prok_xs + euk_xs)],[0,0],linestyle='--',color='black')
+    # #plt.scatter(prok_xs+euk_xs,[abslog(x-y) for (x,y) in (prok_aics + euk_aics)],color=colors)
+    # plt.semilogx()
+    
     plt.subplot(3,1,2)
-    plt.ylabel("<- Pairwise Better ($\Delta$ AIC) Linear Better ->")
-    plt.scatter(prok_Ns,[abslog10(x-y) for (x,y) in prok_aics],label="Prokaryotic Motifs",marker='o',
-                 color=prok_color)
-    plt.scatter(euk_Ns,[abslog10(x-y) for (x,y) in euk_aics],label="Eukaryotic Motifs",marker='s',
+    #plt.ylabel("<- Pairwise Better ($\Delta$ AIC) Linear Better ->")
+    plt.ylabel("logmod($\Delta$ AICc)")
+    euk_ys = [logmod(x-y) for (x,y) in euk_aics]
+    prok_ys =[logmod(x-y) for (x,y) in prok_aics]
+    ys = prok_ys + euk_ys
+    plt.scatter(euk_xs,euk_ys,label="Eukaryotic Motifs",marker='s',
                 color=euk_color)
-    plt.legend()
-    plt.plot([1,max(prok_Ns + euk_Ns)],[0,0],linestyle='--',color='black')
-    #plt.scatter(prok_Ns+euk_Ns,[abslog(x-y) for (x,y) in (prok_aics + euk_aics)],color=colors)
-    plt.semilogx()
+    plt.scatter(prok_xs,prok_ys,label="Prokaryotic Motifs",marker='o',
+                 color=prok_color)
+    plt.plot([0,0],[min(ys), max(ys)], linestyle='--',color='black')
+    plt.plot([min(xs),max(xs)],[0,0], linestyle='--',color='black')
+    #plt.xlim(xmin,xmax)
+    #plt.plot([10,max(prok_xs + euk_xs)],[0,0],linestyle='--',color='black')
+    #plt.scatter(prok_xs+euk_xs,[abslog(x-y) for (x,y) in (prok_aics + euk_aics)],color=colors)
+    #plt.semilogx()
 
     plt.subplot(3,1,3)
-    plt.ylabel("<- Pairwise Better ($\Delta$ CV LL) Linear Better ->")
-    plt.scatter(prok_Ns,map(abslog10,cv_difs[:len(prok_motifs)]),
+    #plt.ylabel("<- Pairwise Better ($\Delta$ CV LL) Linear Better ->")
+    plt.ylabel("logmod($\Delta$ CV)")
+    euk_ys = map(logmod,cv_difs[len(suitable_prok_motifs):])
+    prok_ys = map(logmod,cv_difs[:len(suitable_prok_motifs)])
+    ys = prok_ys + euk_ys
+    plt.scatter(euk_xs,euk_ys,
+                label="Eukaryotic Motifs",marker='s', color=euk_color)
+    plt.scatter(prok_xs,prok_ys,
                 label="Prokaryotic Motifs",marker='o', color=prok_color)
-    plt.scatter(euk_Ns,map(abslog10,cv_difs[len(prok_motifs):]),
-                label="Eukaryotic Motifs",marker='o', color=euk_color)
+    plt.plot([0,0],[min(ys), max(ys)], linestyle='--',color='black')
+    plt.plot([min(xs),max(xs)],[0,0], linestyle='--',color='black')
     #plt.ylim(-30,30)
-    plt.legend()
-    plt.plot([1,max(prok_Ns + euk_Ns)],[0,0],linestyle='--',color='black')
-    plt.semilogx()
-    maybesave("aic_bic_cv_comparison.eps")
+    #plt.xlim(xmin,xmax)
+    #plt.plot([10,max(prok_xs + euk_xs)],[0,0],linestyle='--',color='black')
+    #plt.semilogx()
+    plt.tight_layout()
+    #maybesave("aic_bic_cv_comparison.eps")
+    plt.xlabel("$\log_{10}(N/p)$ for Pairwise Model")
+    #xxl=plt.xlabel("Motif Size")
+    # xxl.set_position((xxl.get_position()[0],1)) # This says use the top of the bottom axis as the reference point.
+    # xxl.set_verticalalignment('center')
+    plt.savefig("aic_aicc_bic_cv_comparison.eps",bbox_extra_artists=(leg,),bbox_inches='tight')
+    plt.close()
 
-    plt.scatter(map(abslog10,cv_difs), map(abslog10,bic_difs),color=colors)
-    plt.plot([0,0],[-5,5],linestyle='--',color='black')
-    plt.plot([-5,5],[0,0],linestyle='--',color='black')
-    plt.plot([-5,5],[-5,5],linestyle='--',color='black')
-    plt.xlim(-5,5)
-    plt.ylim(-5,5)
-    plt.xlabel("<- Pairwise Better ($\Delta$ CV) Linear Better ->")
-    plt.ylabel("<- Pairwise Better ($\Delta$ BIC) Linear Better ->")
+    # plt.scatter(map(abslog10,cv_difs), map(abslog10,bic_difs),color=colors)
+    # plt.plot([0,0],[-5,5],linestyle='--',color='black')
+    # plt.plot([-5,5],[0,0],linestyle='--',color='black')
+    # plt.plot([-5,5],[-5,5],linestyle='--',color='black')
+    # plt.xlim(-5,5)
+    # plt.ylim(-5,5)
+    # plt.xlabel("<- Pairwise Better ($\Delta$ CV) Linear Better ->")
+    # plt.ylabel("<- Pairwise Better ($\Delta$ BIC) Linear Better ->")
     
-    prok_bic_linear_better = count(lambda x:x>0,bic_difs[:len(prok_motifs)])
-    prok_cv_linear_better = count(lambda x:x>0,cv_difs[:len(prok_motifs)])
-    prok_bic_cv_linear_better = count(lambda (b,c):b>0 and c > 0,zip(bic_difs,cv_difs)[:len(prok_motifs)])
-    euk_bic_linear_better = count(lambda x:x>0,bic_difs[len(prok_motifs):])
-    euk_cv_linear_better = count(lambda x:x>0,cv_difs[len(prok_motifs):])
-    euk_bic_cv_linear_better = count(lambda (b,c):b>0 and c > 0,zip(bic_difs,cv_difs)[len(prok_motifs):])
+    # prok_bic_linear_better = count(lambda x:x>0,bic_difs[:len(prok_motifs)])
+    # prok_cv_linear_better = count(lambda x:x>0,cv_difs[:len(prok_motifs)])
+    # prok_bic_cv_linear_better = count(lambda (b,c):b>0 and c > 0,zip(bic_difs,cv_difs)[:len(prok_motifs)])
+    # euk_bic_linear_better = count(lambda x:x>0,bic_difs[len(prok_motifs):])
+    # euk_cv_linear_better = count(lambda x:x>0,cv_difs[len(prok_motifs):])
+    # euk_bic_cv_linear_better = count(lambda (b,c):b>0 and c > 0,zip(bic_difs,cv_difs)[len(prok_motifs):])
         
     
 def abslog(x):
@@ -194,6 +282,9 @@ def abslog(x):
 def abslog10(x):
     return sign(x) * log10(abs(x))
 
+def logmod(x):
+    return sign(x) * log10(abs(x) + 1)
+    
 def roc_experiment(motif, trials=10**5):
     pw_model = pairwise_model_from_motif(motif)
     li_model = linear_model_from_motif(motif)
@@ -206,3 +297,58 @@ def roc_experiment(motif, trials=10**5):
     _, _, _, pw_auc = roc_curve(pw_pos, pw_neg)
     _, _, _, li_auc = roc_curve(li_pos, li_neg,color='g')
     return li_auc, pw_auc
+
+def sample_pw_motif_mh(code, N, Ne, mu, iterations=50000):
+    nu = Ne - 1
+    def log_f(motif):
+        eps = map(lambda x:-log(x),pw_prob_sites(motif, code))
+        return sum(log(1/(1+exp(ep-mu))**nu) for ep in eps)
+    prop = mutate_motif
+    L = len(code) + 1
+    x0 = random_motif(L, N)
+    return mh(log_f,prop,x0,cache=True, use_log=True, iterations=iterations)
+    
+    
+def degradation_experiment():
+    """Determine whether linear or pairwise models are more resistant to degradation"""
+    L = 10
+    N = 50
+    Ne = 5
+    nu = Ne - 1
+    sigma = 1
+    mu = -10
+    matrix = sample_matrix(L, sigma)
+    code = sample_code(L, sigma)
+    li_motif = sample_motif_cftp(matrix, mu, Ne, N)
+    pw_motif = sample_pw_motif_mh(code, N, Ne, mu, iterations=100000)[-1]
+    def li_log_fitness(motif):
+        eps = [score_seq(matrix, site) for site in motif]
+        return sum(-nu * log((1+exp(ep-mu))) for ep in eps)
+    def pw_log_fitness(motif):
+        eps = map(lambda x:-log(x),pw_prob_sites(motif, code))
+        return sum(log(1/(1+exp(ep-mu))**nu) for ep in eps)
+    li_base_fit = li_log_fitness(li_motif)
+    li_mut_fits = [li_log_fitness(mutate_motif(li_motif)) for i in range(100)]
+    pw_base_fit = pw_log_fitness(pw_motif)
+    pw_mut_fits = [pw_log_fitness(mutate_motif(pw_motif)) for i in range(100)]
+
+def estremo(iterations=50000, verbose=False):
+    mu = -10
+    Ne = 5
+    nu = Ne - 1
+    def log_f((code, motif)):
+        try:
+            eps = map(lambda x:-log(x),pw_prob_sites(motif, code))
+            return sum(nu * log(1/(1+exp(ep-mu))) for ep in eps)
+        except:
+            print "mean eps:", mean(eps)
+            raise Exception()
+    def prop((code, motif)):
+        code_p = code[:]
+        i = random.randrange(len(code))
+        code_p[i][(random.choice("ACGT"), random.choice("ACGT"))] += random.gauss(0,0.01)
+        motif_p = mutate_motif(motif)
+        return (code_p,motif_p)
+    x0 = (sample_code(L=10,sigma=1), random_motif(length=10, num_sites=20))
+    chain = mh(log_f, prop, x0, use_log=True, iterations=iterations, verbose=verbose)
+    return chain
