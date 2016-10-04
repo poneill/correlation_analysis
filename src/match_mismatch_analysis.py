@@ -5,7 +5,7 @@ from tqdm import *
 from linear_gaussian_ensemble_gini_analysis import mutate_motif_k_times
 import sys
 sys.path.append("/home/pat/Dropbox/weighted_ensemble_motif_analysis")
-from maxent_motif_sampling import maxent_sample_motifs_with_ic
+from formosa import maxent_motifs
 from we_vs_mh_validation import all_boxplot_comparisons
 import numpy as np
 from matplotlib import pyplot as plt
@@ -255,15 +255,18 @@ def chem_pot_occ(sigma,mm,mu):
 def crit_L(sigma):
     return -log(G)/log((1+3*exp(-sigma))/4.0)
 
+def crit_sigma(L, c=1):
+    return -log((4*(c/float(G))**(1.0/L)-1)/3)
+
 def L_vs_sigma_plot(filename=None,with_bio=False):
     if with_bio:
         tfdf = extract_motif_object_from_tfdf()
         motifs = [getattr(tfdf,tf) for tf in tfdf.tfs]
         Ls = [len(motif[0]) for motif in motifs]
-        ns = [len(motif) for motif in motifs]
+        cs = [len(motif) for motif in motifs]
         ics = [motif_ic(motif) for motif in motifs]
         ic_density = [ic/L for ic,L in zip(ics,Ls)]
-        sigmas = [mean(map(sd,make_pssm(motif))) for motif in motifs]
+        sigmas = [mean(map(sd, make_pssm(motif))) for motif in motifs]
         ginis = [motif_gini(motif,correct=False) for motif in motifs]
         mi_density = [total_motif_mi(motif)/choose(L,2) for motif,L in zip(motifs,Ls)]
     min_sigma = 0.1

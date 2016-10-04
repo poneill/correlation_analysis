@@ -1,6 +1,7 @@
 from utils import choose, log_choose, inverse_cdf_sample, permute, secant_interval, show, normalize, kde_regress
-from utils import maybesave, pl, bisect_interval, mean, log2, motif_ic
+from utils import maybesave, pl, bisect_interval, mean, log2, motif_ic, score_seq
 from utils import bisect_interval_noisy, mmap, motif_gini, total_motif_mi, choose2
+from formosa_utils import approx_mu as gle_approx_mu
 from math import log, exp
 from scipy.optimize import minimize
 from scipy.stats import pearsonr
@@ -8,7 +9,7 @@ import random
 import inspect
 import numpy as np
 from pwm_utils import site_sigma_from_matrix, psfm_from_motif, sigma_from_matrix
-from pwm_utils import pssm_from_motif
+from pwm_utils import pssm_from_motif, matrix_from_motif
 from matplotlib import pyplot as plt
 from tqdm import *
 from exact_evo_sim_sampling import log_regress_spec2
@@ -82,7 +83,7 @@ def p_from_copies(k,sigma,Ne,L,copies):
     return p(k,sigma,mu,Ne,L)
 
 def ps_from_copies(sigma,Ne,L,copies,approx=True):
-    print "ps from copies:", sigma, Ne, L, copies
+    #print "ps from copies:", sigma, Ne, L, copies
     if approx:
         mu = approx_mu(G, sigma, L, copies)
     else:
@@ -165,9 +166,9 @@ def spoof_motif_ref(motif, num_motifs=10, trials=10, sigma=None,Ne_tol=10**-4):
     return [sample_motif(sigma, Ne, L, copies, n) for _ in range(num_motifs)]
 
 def spoof_motifs(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-4,double_sigma=True):
-    n = len(motif)
+    N = len(motif)
     L = len(motif[0])
-    copies = 10*n
+    copies = 10*N
     if sigma is None:
         sigma = sigma_from_matrix(pssm_from_motif(motif,pc=1))
     epsilon = (1+double_sigma)*sigma # 15 Jan 2016
@@ -180,6 +181,24 @@ def spoof_motifs(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-4,double
         return mean(map(motif_ic,motifs)) - bio_ic
     Ne = log_regress_spec2(f,[1,10],tol=10**-3)
     return [sample_motif(sigma, Ne, L, copies, n) for _ in range(num_motifs)]
+
+def spoof_motifs_occ(motif, num_motifs=10, trials=1, sigma=None,Ne_tol=10**-4,double_sigma=True):
+    N = len(motif)
+    L = len(motif[0])
+    copies = 10*N
+    if sigma is None:
+        sigma = sigma_from_matrix(pssm_from_motif(motif,pc=1))
+    epsilon = (1+double_sigma)*sigma # 15 Jan 2016
+    print "sigma:", sigma
+    #bio_ic = motif_ic(motif)
+    mat = matrix_from_motif(motif)
+    eps = [score_seq(mat, site) for site in motif]
+    mu = gle_approx_mu(mat, copies)
+    bio_occ = mean([1/(1+exp(ep-mu)) for ep in eps])
+    def f(Ne):
+        return expected_occupancy(epsilon, Ne, L, copies) - bio_occ
+    Ne = log_regress_spec2(f,[1,10],tol=10**-3)
+    return [sample_motif(sigma, Ne, L, copies, N) for _ in range(num_motifs)]
 
     
 def sample_ic(sigma,mu,Ne,L,n,trials=1000):
@@ -198,9 +217,9 @@ def expected_mi_from_undersampling(sigma,Ne,L,copies,n):
     return 
 
 def expected_occupancy(sigma,Ne,L,copies):
-    ps = ps_from_copies(sigma,Ne,L,copies)
-    mu = mu_from(G,sigma,L,copies)
-    return sum(occ_from_mismatches(k,L,sigma,mu)*p for k,p in enumerate(ps))
+    ps = ps_from_copies(sigma, Ne, L, copies)
+    mu = mu_from(G, sigma, L, copies)
+    return sum(occ_from_mismatches(k, L, sigma, mu)*p for (k, p) in enumerate(ps))
 
 def expected_occ_spec(sigma,Ne,L,copies,epsilon=0.01):
     nu = Ne - 1
@@ -469,8 +488,8 @@ def expected_mi2(L,k):
     return total_IC - expected_ic(L,k)
 
 def test_expected_mi(L,n):
-    plt.plot([expected_mi(L,k)*choose(L,2) for k in range(L + 1)])
-    plt.plot([expected_mi2(L,k) for k in range(L + 1)])
+    plt.plot([expected_mi(L,k)*choose(L,2) for k in range(L + 1)], label="Expected MI")
+    plt.plot([expected_mi2(L,k) for k in range(L + 1)], label="Expected MI2")
     plt.scatter(range(L+1),[mean((total_motif_mi(mm_motif(L,n,k))) for i in range(10))
                             for k in trange(L + 1)])
         

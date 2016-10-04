@@ -1,6 +1,7 @@
 """utilities for pwm matrices"""
 
 from utils import normalize, h, inverse_cdf_sample, transpose, make_pssm, prod, argmin, mean, sd
+from utils import variance, score_seq
 import random
 from math import exp, log, sqrt, pi
 
@@ -14,14 +15,18 @@ def Zb_from_matrix(matrix,G):
     Zb_hat = prod(sum(exp(-ep) for ep in col) for col in matrix)/(4**L)
     return G * Zb_hat
 
-def psfm_from_matrix(matrix):
+def psfm_from_matrix(matrix, lamb=1):
     """calculate IC assuming that matrix has log-odds weights"""
-    return [normalize([exp(-ep) for ep in col]) for col in matrix]
+    return [normalize([exp(-lamb*ep) for ep in col]) for col in matrix]
 
 def psfm_from_motif(motif,pc=1):
-    n = float(len(motif))
+    N = float(len(motif))
     cols = transpose(motif)
-    return [[(col.count(b) + pc)/(n+4*pc) for b in "ACGT"] for col in cols]
+    return [[(col.count(b) + pc)/(N+4*pc) for b in "ACGT"] for col in cols]
+
+def self_scores(motif, pc=1):
+    pssm = pssm_from_motif(motif, pc=pc)
+    return [score_seq(pssm, seq) for seq in motif]
 
 def pssm_from_motif(motif, pc=1):
     psfm = psfm_from_motif(motif, pc)
@@ -34,6 +39,10 @@ def ic_from_matrix(matrix):
 def sample_from_psfm(psfm):
     return "".join([inverse_cdf_sample("ACGT",ps) for ps in psfm])
 
+def spoof_psfm(motif, pc=1):
+    psfm = psfm_from_motif(motif, pc=pc)
+    return [sample_from_psfm(psfm) for _ in motif]
+    
 def site_mu_from_matrix(matrix):
     return sum(map(mean,matrix))
 

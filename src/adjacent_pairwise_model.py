@@ -1,5 +1,5 @@
-from utils import pairs,argmin,random_site,prod, mean, score_seq, maybesave
-from utils import scatter, normalize, inverse_cdf_sample, transpose
+from utils import pairs,argmin,random_site,prod, mean, score_seq, maybesave, variance
+from utils import scatter, normalize, inverse_cdf_sample, transpose, mean_ci, bs_ci
 import random
 from itertools import product
 from math import exp,log
@@ -23,7 +23,7 @@ def best_binder_dep(code):
     i = argmin([score(code,site) for site in kmers(L)])
     return list(kmers(L))[i]
     
-def score(code,site):
+def score(code, site):
     return sum(c[n1,n2] for c,(n1,n2) in zip(code,pairs(site)))
 
 def occ_ref(sigma,L,G=5*10**6):
@@ -130,6 +130,7 @@ def linearize_ref(code):
         ep = score(code,site)
         for i,b in enumerate(site):
             pssm[i]["ACGT".index(b)] += ep
+    #pssm = [[x/(4.0**(L-1)) for x in row] for row in pssm]
     pssm = [[x/(4.0**(L-1)) for x in row] for row in pssm]
     return pssm
     
@@ -175,6 +176,10 @@ def sample_site(code):
 def prob_site(site,code):
     return exp(score(code, site))/compute_Zb(code)
 
+def prob_sites(sites,code):
+    Zb = compute_Zb(code)
+    return [exp(score(code, site))/Zb for site in sites]
+
 def test_sample_site(trials=10000):
     L, sigma = 3, 1
     code = sample_code(L,sigma)
@@ -186,10 +191,10 @@ def test_sample_site(trials=10000):
     p_obs = [counts[kmer]/float(trials) for kmer in kmers(L)]
     scatter(ps,p_obs)
 
-def code_from_motif(motif):
+def code_from_motif(motif, pc=1):
     cols = transpose(motif)
     N = float(len(motif))
-    freqs = [{(b1,b2):((zip(col1,col2).count((b1,b2))+1)/(N+16))
+    freqs = [{(b1,b2):((zip(col1,col2).count((b1,b2))+pc)/(N+16*pc))
            for b1 in "ACGT" for b2 in "ACGT"} for col1,col2 in pairs(cols)]
     ws = [{k:log(p) for k,p in freqs[0].items()}]
     for freq in freqs[1:]:
@@ -210,3 +215,53 @@ def test_code_from_motif():
 def ps_from_code(code):
     L = len(code) + 1
     return normalize([exp(score(code,kmer)) for kmer in kmers(L)])
+
+def pairwise_model_from_motif(motif, pc=1):
+    N = float(len(motif))
+    cols = transpose(motif)
+    col_pairs = map(transpose,pairs(cols))
+    return [{(b1,b2):-log((col_pair.count((b1,b2)) + pc)/(N + 16*pc))
+             for b1 in "ACGT" for b2 in "ACGT"} for col_pair in col_pairs]
+
+def pairwise_likelihood(site,model):
+    ws = [d[(si,sj)] for d,(si,sj) in zip(model,pairs(site))]
+    return exp(sum(ws))
+
+def code_mi(code):
+    """estimate mutual information in code"""
+    def weight_mi(weight):
+        pass
+
+def mgf1(code):
+    """return mean of code Ws by computing moment generating function"""
+    L = len(code) + 1
+    Ws = [np.matrix([[w[b1,b2] for b2 in "ACGT"] for b1 in "ACGT"]) for w in code]
+    one = np.ones((4,4))
+    mp = np.linalg.matrix_power
+    return 1.0/(4**L) * np.sum(np.sum(mp(one, i).dot(W).dot(mp(one, L-2-i)) for i, W in enumerate(Ws)))
+
+def test_mgf1(trials=100):
+    L = 10
+    code = sample_code(L,1)
+    a,b = mean_ci([(score(code, random_site(L))) for i in range(trials)])
+    ans = mgf1(code)
+    print ans, (a,b)
+    return a < ans < b
+    
+def mgf2(code):
+    """return variance of code Ws by computing moment generating function"""
+    L = len(code) + 1
+    Ws = [np.matrix([[w[b1,b2] for b2 in "ACGT"] for b1 in "ACGT"]) for w in code]
+    one = np.ones((4,4))
+    mp = np.linalg.matrix_power
+    terms = [reduce(np.dot, [np.power(W,(i==k) + (j==k)) for k, W in enumerate(Ws)])
+             for i in (range(L-1)) for j in range(L-1)]
+    return 1.0/(4**L) * np.sum(np.sum(terms))
+
+def test_mgf2(trials=100):
+    L = 10
+    code = sample_code(L,1)
+    a,b = bs_ci(variance, ([(score(code, random_site(L))) for i in range(trials)]))
+    ans = mgf2(code)
+    print ans, (a,b)
+    return a < ans < b

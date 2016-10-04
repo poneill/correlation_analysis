@@ -501,7 +501,7 @@ def log_regress(f,xs, tol=0.1):
 
 def log_regress_spec(f,xs, tol=0.01):
     """find root f(x) = 0 using logistic regression, starting with xs"""
-    print "initial seeding for log_regress (unweighted)"
+    #print "initial seeding for log_regress (unweighted)"
     ys = map(f,xs)
     log_xs = map(log,xs)
     plotting = False
@@ -561,12 +561,14 @@ def log_regress_spec2(f,xs, tol=0.01, diagnose=False):
         #print "correlation:",pearsonr(log_xs,ys)
         #lin = poly1d(polyfit(log_xs,ys,1))
         m, b = weighted_regress(log_xs,ys)
-        # if plotting:
-        #     lin = poly1d([m,b])
-        #     plt.scatter(log_xs,ys)
-        #     plt.plot(*pl(lin,log_xs))
-        #     plt.show()
-        honest_guess = -b/m
+        if plotting:
+            lin = poly1d([m,b])
+            plt.scatter(log_xs,ys)
+            plt.plot(*pl(lin,log_xs))
+            plt.show()
+        #print "honest guesses:",honest_guesses
+        prev_max = max(honest_guesses) if honest_guesses else 0
+        honest_guess = min(-b/m, prev_max + 10) # prevent guess from careening off to infinity...
         dx = 0#-(honest_guesses[-1] - honest_guess) if honest_guesses else 0
         log_xp = honest_guess + 2*dx
         log_xs.append(log_xp)
@@ -575,12 +577,12 @@ def log_regress_spec2(f,xs, tol=0.01, diagnose=False):
         honest_guesses.append(honest_guess)
         diff = (abs((honest_guesses[-1]) - (honest_guesses[-2]))
                 if len(honest_guesses) > 1 else None)
-        print "honest_guess:",(honest_guess),"xp:",(log_xp),\
-            "y:",yxp, "diff:",diff
+        # print "honest_guess:",(honest_guess),"xp:",(log_xp),\
+        #     "y:",yxp, "diff:",diff
     #lin = poly1d(polyfit(log_xs,ys,1))
     m, b = weighted_regress(log_xs,ys)#(polyfit(log_xs,ys,1))
     log_xp = -b/m#secant_interval(lin,min(log_xs),max(log_xs))
-    print "final guess: log_xp:",log_xp
+    #print "final guess: log_xp:",log_xp
     if diagnose:
         return log_xs,ys
     else:

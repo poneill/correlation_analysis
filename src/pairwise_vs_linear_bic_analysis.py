@@ -6,17 +6,19 @@ from adjacent_pairwise_model import sample_code
 from pwm_utils import psfm_from_motif as linear_model_from_motif
 from pwm_utils import sample_matrix
 from utils import prod, scatter, cv, mean, transpose, sign, random_site, mutate_motif
-from utils import random_motif, mh, score_seq, motif_ic
+from utils import random_motif, mh, score_seq, motif_ic, subst, inverse_cdf_sample
 from math import log, pi, exp
 import sys
-from formosa import maxent_motifs
+from formosa import maxent_motifs, spoof_maxent_motifs
 from matplotlib import pyplot as plt
 from utils import sorted_indices, rslice, roc_curve
+from utils import total_motif_mi as motif_mi
 from tqdm import *
 import seaborn as sns
 from evo_sampling import sample_motif_cftp
 import random
 import matplotlib as mpl
+import numpy as np
 log10 = lambda x:log(x,10)
 
 def linear_prob_site(site, psfm):
@@ -144,6 +146,37 @@ def sanity_check():
     cv_experiment(pw_motifs)
     cv_experiment(li_motifs)
 
+def redo_sample_size_dependence(filename=None):
+    palette2 = sns.cubehelix_palette(5)
+    prok_color = palette2[4]
+    euk_color = palette2[1]
+    colors = [prok_color for _ in suitable_prok_motifs] + [euk_color for _ in suitable_euk_motifs]
+    xmin = 1 * 5
+    xmax = max_N * 2
+    sns.set_style('white')
+    #plt.ylabel("<- Pairwise Better ($\Delta$ BIC) Linear Better ->")
+    plt.xlabel("log(N/p) for Pairwise Model",fontsize='large')
+    plt.ylabel("logmod($\Delta$ BIC)",fontsize='large')
+    euk_ys = [logmod(x-y) for (x,y) in (euk_bics)]
+    prok_ys = [logmod(x-y) for (x,y) in (prok_bics)]
+    ys = prok_ys + euk_ys
+    plt.scatter(euk_xs,euk_ys,label="Eukaryotic Motifs",marker='s',color=euk_color, s=20)
+    plt.scatter(prok_xs,prok_ys,label="Prokaryotic Motifs",marker='o',
+                color=prok_color, s=20)
+    plt.plot([0,0],[min(ys), max(ys)], linestyle='--',color='black')
+    plt.plot([min(xs),max(xs)],[0,0], linestyle='--',color='black')
+    # plt.scatter(prok_xs,[(x-y)/N for (x,y),N in zip(prok_bics,prok_xs)],label="Prokaryotic Motifs",marker='o',
+    #              color=prok_color)
+    # plt.scatter(euk_xs,[(x-y)/N for (x,y),N in zip(euk_bics, euk_xs)],label="Eukaryotic Motifs",marker='s',
+    #             color=euk_color)
+    #plt.plot([10,max_N],[0,0],linestyle='--',color='black')
+    #plt.xlim(xmin,xmax)
+    leg = plt.legend(frameon=True,
+                     #bbox_to_anchor=(1.25,0.75),
+                     loc='lower left',
+                     fontsize='large',)
+    maybesave(filename)
+    
 def sample_size_dependence_experiment():
     """is prok=linear, euk=pairwise result merely due to sample size?  plot by N to find out."""
     # suitable_prok_motifs = filter(lambda motif:is_suitable_pairwise(motif) and is_suitable_linear(motif), prok_motifs)
@@ -174,7 +207,7 @@ def sample_size_dependence_experiment():
     # euk_Ns = map(len,suitable_euk_motifs)
     N_colors = [sns.cubehelix_palette(5)[int(round(log10(len(motif))))] for motif in (suitable_prok_motifs + suitable_euk_motifs)]
     max_N = max(prok_Ns + euk_Ns)
-
+    
     mpl.rcParams['xtick.major.pad'] = 10
     mpl.rcParams['ytick.major.pad'] = 10
     palette2 = sns.cubehelix_palette(5)
@@ -219,7 +252,7 @@ def sample_size_dependence_experiment():
     
     plt.subplot(3,1,2)
     #plt.ylabel("<- Pairwise Better ($\Delta$ AIC) Linear Better ->")
-    plt.ylabel("logmod($\Delta$ AICc)")
+    plt.ylabel("logmod($\Delta$ AIC)")
     euk_ys = [logmod(x-y) for (x,y) in euk_aics]
     prok_ys =[logmod(x-y) for (x,y) in prok_aics]
     ys = prok_ys + euk_ys
@@ -332,23 +365,87 @@ def degradation_experiment():
     pw_base_fit = pw_log_fitness(pw_motif)
     pw_mut_fits = [pw_log_fitness(mutate_motif(pw_motif)) for i in range(100)]
 
-def estremo(iterations=50000, verbose=False):
-    mu = -10
-    Ne = 5
+def estremo(iterations=50000, verbose=False, every=1, sigma=1, mu=-10, Ne=5):
     nu = Ne - 1
     def log_f((code, motif)):
-        try:
-            eps = map(lambda x:-log(x),pw_prob_sites(motif, code))
-            return sum(nu * log(1/(1+exp(ep-mu))) for ep in eps)
-        except:
-            print "mean eps:", mean(eps)
-            raise Exception()
+        eps = map(lambda x:-log(x),pw_prob_sites(motif, code))
+        return sum(nu * log(1/(1+exp(ep-mu))) for ep in eps)
     def prop((code, motif)):
-        code_p = code[:]
+        code_p = [d.copy() for d in code]
         i = random.randrange(len(code))
-        code_p[i][(random.choice("ACGT"), random.choice("ACGT"))] += random.gauss(0,0.01)
+        b1, b2 = random.choice("ACGT"), random.choice("ACGT")
+        code_p[i][(b1, b2)] += random.gauss(0,sigma)
         motif_p = mutate_motif(motif)
         return (code_p,motif_p)
     x0 = (sample_code(L=10,sigma=1), random_motif(length=10, num_sites=20))
-    chain = mh(log_f, prop, x0, use_log=True, iterations=iterations, verbose=verbose)
+    chain = mh(log_f, prop, x0, use_log=True, iterations=iterations, verbose=verbose,every=every)
     return chain
+
+def estremo_gibbs(iterations=50000, verbose=False, every=1000, sigma=1, mu=-10, Ne=5):
+    nu = Ne - 1
+    L = 10
+    N = 20
+    code, motif = (sample_code(L=10,sigma=1), random_motif(length=L, num_sites=N))
+    def log_f((code, motif)):
+        eps = map(lambda x:-log(x),pw_prob_sites(motif, code))
+        return sum(nu * log(1/(1+exp(ep-mu))) for ep in eps)
+    chain = [(code, motif[:])]
+    print log_f((code, motif))
+    for iteration in trange(iterations):
+        for i in range(N):
+            site = motif[i]
+            for j in range(L):
+                b = site[j]
+                log_ps = []
+                bps = [bp for bp in "ACGT" if not bp == b]
+                for bp in bps:
+                    site_p = subst(site,bp,j)
+                    log_ps.append(log_f((code,[site_p])))
+                log_ps = [p-min(log_ps) for p in log_ps]
+                bp = inverse_cdf_sample(bps,map(exp,log_ps),normalized=False)
+                motif[i] = subst(site,bp,j)
+        for k in range(L-1):
+            for b1 in "ACGT":
+                for b2 in "ACGT":
+                    dws = [random.gauss(0,0.1) for _ in range(10)]
+                    code_ps = [[d.copy() for d in code] for _ in range(10)]
+                    for code_p, dw in zip(code_ps, dws):
+                        code_p[k][b1,b2] += dw
+                    log_ps = [log_f((code_p, motif)) for code_p in code_ps]
+                    log_ps = [p-min(log_ps) for p in log_ps]
+                    code_p = inverse_cdf_sample(code_ps, map(exp,log_ps),normalized=False)
+                    code = code_p
+        print log_f((code, motif))
+        chain.append((code, motif[:]))
+    return chain
+                    
+                        
+                    
+    x0 = (sample_code(L=10,sigma=1), random_motif(length=10, num_sites=20))
+    chain = mh(log_f, prop, x0, use_log=True, iterations=iterations, verbose=verbose,every=every)
+    return chain
+
+def interpret_estremo_chain(chain,mu=-10,Ne=5):
+    nu = Ne-1
+    def log_f((code, motif)):
+        eps = map(lambda x:-log(x),pw_prob_sites(motif, code))
+        return sum(nu * log(1/(1+exp(ep-mu))) for ep in eps)
+    spoofs = [spoof_maxent_motifs(motif,10) for code,motif in tqdm(chain)]
+    plt.plot([motif_ic(motif) for (code, motif) in tqdm(chain)])
+    plt.plot([motif_mi(motif) for (code, motif) in tqdm(chain)])
+    plt.plot([mean(map(motif_ic,motifs)) for motifs in tqdm(spoofs)])
+    plt.plot([mean(map(motif_mi,motifs)) for motifs in tqdm(spoofs)])
+    plt.plot([indep_measure(code) for (code, motif) in tqdm(chain)])
+    plt.plot(map(log_f,chain))
+
+log2 = lambda x:log(x,2)
+
+def dkl(mat):
+    P = -np.exp(mat)/np.sum(-np.exp(mat))
+    return sum(P[i,j]*log2(P[i,j]/(np.sum(P[i,:])*np.sum(P[:,j]))) for i in range(4) for j in range(4))
+    
+def indep_measure(code):
+    mats = [np.matrix([[d[b1,b2] for b1 in "ACGT"] for b2 in "ACGT"]) for d in code]
+    #return sum(np.linalg.norm((mat + mat.transpose())/2)/np.linalg.norm(mat) for mat in mats)
+    return sum(map(dkl,mats))
+

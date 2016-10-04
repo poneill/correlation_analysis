@@ -4,7 +4,7 @@ class Organism():
     pass
 
 def make_tfbs_object():
-    with open("../../TFBS_data/tfbs_data_merged.tsv") as f:
+    with open("/home/pat/TFBS_data/tfbs_data_merged.tsv") as f:
         lines = [line.strip().split("\t") for line in f.readlines()[1:]]
     raw_dict = defaultdict(list)
     for line in lines:
